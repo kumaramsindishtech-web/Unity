@@ -1,0 +1,44 @@
+{
+  "name": "com.industrialreactor.simulator",
+  "version": "1.0.0",
+  "displayName": "Industrial Reactor Simulator",
+  "description": "Professional Unity addon for industrial reactor simulation with custom editor UI controls. Features include realtime water fill/drain, agitator mixing, bubble effects, tank cutaway visualization, valve controls, and pipe flow animation. Designed for industrial digital twin visualization in URP.",
+  "unity": "6000.0",
+  "unityRelease": "0f1",
+  "documentationUrl": "https://github.com/kumaramsindishtech-web/Unity",
+  "changelogUrl": "https://github.com/kumaramsindishtech-web/Unity/blob/main/CHANGELOG.md",
+  "licensesUrl": "https://github.com/kumaramsindishtech-web/Unity/blob/main/LICENSE",
+  "dependencies": {
+    "com.unity.render-pipelines.universal": "17.0.0"
+  },
+  "keywords": [
+    "reactor",
+    "simulation",
+    "industrial",
+    "digital-twin",
+    "urp",
+    "water",
+    "agitator",
+    "valve",
+    "visualization",
+    "editor-tool"
+  ],
+  "author": {
+    "name": "Industrial Reactor Simulator",
+    "email": "support@industrialreactor.com",
+    "url": "https://github.com/kumaramsindishtech-web"
+  },
+  "type": "tool",
+  "samples": [
+    {
+      "displayName": "Demo Scene",
+      "description": "Sample scene with pre-configured reactor setup",
+      "path": "Samples~/DemoScene"
+    },
+    {
+      "displayName": "Simulation Data Presets",
+      "description": "Pre-configured simulation data assets for common scenarios",
+      "path": "Samples~/SimulationPresets"
+    }
+  ]
+}

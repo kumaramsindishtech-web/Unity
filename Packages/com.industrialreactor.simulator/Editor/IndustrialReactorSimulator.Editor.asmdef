@@ -1,8 +1,12 @@
 {
-    "name": "IndustrialReactorSimulator",
-    "rootNamespace": "IndustrialReactorSimulator",
-    "references": [],
-    "includePlatforms": [],
+    "name": "IndustrialReactorSimulator.Editor",
+    "rootNamespace": "IndustrialReactorSimulator.Editor",
+    "references": [
+        "IndustrialReactorSimulator.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
