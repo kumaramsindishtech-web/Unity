@@ -19,7 +19,9 @@ namespace IndustrialReactorSimulator
         [SerializeField] private Transform waterMesh;
         [SerializeField] private WaterScaleMode scaleMode = WaterScaleMode.ScaleY;
         [Tooltip("Fill axis: Y for vertical tanks, Z for horizontal tanks")]
-        [SerializeField] private WaterFillAxis fillAxis = WaterFillAxis.Z;
+        [SerializeField] private WaterFillAxis fillAxis = WaterFillAxis.Y;
+        [Tooltip("Fill direction: Normal = bottom to top, Inverted = top to bottom")]
+        [SerializeField] private WaterFillDirection fillDirection = WaterFillDirection.Normal;
         [SerializeField] private float minScale = 0.01f;
         [SerializeField] private float maxScale = 1f;
         [SerializeField] private Vector3 emptyPositionOffset = Vector3.zero;
@@ -59,6 +61,7 @@ namespace IndustrialReactorSimulator
         public bool IsEmpty => currentWaterLevel <= 0.01f;
         public bool IsFull => currentWaterLevel >= 0.99f;
         public WaterFillAxis FillAxis => fillAxis;
+        public WaterFillDirection FillDirection => fillDirection;
 
         /// <summary>
         /// Enable or disable tank filling (used for sequential flow)
@@ -169,6 +172,15 @@ namespace IndustrialReactorSimulator
         }
 
         /// <summary>
+        /// Set fill direction at runtime
+        /// </summary>
+        public void SetFillDirection(WaterFillDirection direction)
+        {
+            fillDirection = direction;
+            UpdateWaterVisuals();
+        }
+
+        /// <summary>
         /// Reset water to empty state
         /// </summary>
         public void ResetWater()
@@ -243,11 +255,15 @@ namespace IndustrialReactorSimulator
                         waterMesh.localScale = new Vector3(initialScale.x, initialScale.y, scale);
                     }
                     
-                    waterMesh.localPosition = Vector3.Lerp(
-                        initialPosition + emptyPositionOffset,
-                        initialPosition + fullPositionOffset,
-                        currentWaterLevel
-                    );
+                    // Adjust position based on fill direction
+                    Vector3 startPos = fillDirection == WaterFillDirection.Normal 
+                        ? initialPosition + emptyPositionOffset 
+                        : initialPosition + fullPositionOffset;
+                    Vector3 endPos = fillDirection == WaterFillDirection.Normal 
+                        ? initialPosition + fullPositionOffset 
+                        : initialPosition + emptyPositionOffset;
+                    
+                    waterMesh.localPosition = Vector3.Lerp(startPos, endPos, currentWaterLevel);
                     break;
 
                 case WaterScaleMode.ShaderOnly:
@@ -310,5 +326,14 @@ namespace IndustrialReactorSimulator
     {
         Y,  // Vertical fill (default)
         Z   // Horizontal fill (for horizontal tanks)
+    }
+
+    /// <summary>
+    /// Water fill direction
+    /// </summary>
+    public enum WaterFillDirection
+    {
+        Normal,   // Bottom to top (Y) or back to front (Z)
+        Inverted  // Top to bottom (Y) or front to back (Z)
     }
 }

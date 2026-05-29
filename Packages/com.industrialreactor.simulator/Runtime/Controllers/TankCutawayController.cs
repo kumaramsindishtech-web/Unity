@@ -59,8 +59,21 @@ namespace IndustrialReactorSimulator
 
         private void Start()
         {
-            // Start with cutaway disabled
-            SetCutawayImmediate(false);
+            // Start with cutaway disabled in play mode
+            if (Application.isPlaying)
+            {
+                SetCutawayImmediate(false);
+            }
+        }
+
+        private void OnEnable()
+        {
+            // Ensure cutaway is disabled when component is enabled in editor
+            if (!Application.isPlaying)
+            {
+                if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
+                SetCutawayImmediate(false);
+            }
         }
 
         public void ActivateCutaway()

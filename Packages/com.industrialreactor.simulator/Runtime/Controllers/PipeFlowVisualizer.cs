@@ -45,6 +45,12 @@ namespace IndustrialReactorSimulator
         [SerializeField] private string flowSpeedProperty = "_FlowSpeed";
         [SerializeField] private string flowIntensityProperty = "_FlowIntensity";
         [SerializeField] private string fillDirectionProperty = "_FillDirection";
+        [SerializeField] private string invertFillProperty = "_InvertFill";
+        
+        [Header("Fill Direction Fix")]
+        [Tooltip("Enable if water fills from wrong direction (UV mapping issue)")]
+        [SerializeField] private bool invertFillDirection = false;
+        [SerializeField] private string invertFillProperty = "_InvertFill";
 
         [Header("Visual Settings")]
         [Tooltip("UV scroll speed multiplier for flow animation")]
@@ -136,10 +142,26 @@ namespace IndustrialReactorSimulator
 
         private void Start()
         {
-            // Start with metal material in editor mode
+            // Start with metal material
             if (!Application.isPlaying) return;
+            
+            // Ensure we start in metal mode with empty pipe
             SetMetalMode();
+            fillProgress = 0f;
+            flowIntensity = 0f;
             UpdateMaterial();
+        }
+
+        private void OnEnable()
+        {
+            // Ensure proper state in editor
+            if (!Application.isPlaying && pipeRenderer != null)
+            {
+                if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
+                // Reset to metal appearance in editor
+                if (metalMaterial != null)
+                    SetPipeMaterial(metalMaterial);
+            }
         }
 
         private void OnDestroy()
@@ -445,8 +467,18 @@ namespace IndustrialReactorSimulator
             propertyBlock.SetFloat(flowSpeedProperty, flowAnimationSpeed);
             propertyBlock.SetFloat(fillDirectionProperty, flowDirectionMultiplier);
             propertyBlock.SetFloat(flowIntensityProperty, flowIntensity);
+            propertyBlock.SetFloat(invertFillProperty, invertFillDirection ? 1f : 0f);
             
             pipeRenderer.SetPropertyBlock(propertyBlock, materialIndex);
+        }
+
+        /// <summary>
+        /// Set invert fill direction at runtime
+        /// </summary>
+        public void SetInvertFillDirection(bool invert)
+        {
+            invertFillDirection = invert;
+            UpdateMaterial();
         }
 
         private void UpdateFlowState()

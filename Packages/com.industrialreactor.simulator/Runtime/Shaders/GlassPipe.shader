@@ -14,7 +14,8 @@ Shader "Industrial Reactor/Glass Pipe"
         _FillProgress ("Fill Progress", Range(0, 1)) = 0
         _FlowSpeed ("Flow Speed", Range(0, 5)) = 2.0
         _FlowIntensity ("Flow Intensity", Range(0, 1)) = 1.0
-        _FillDirection ("Fill Direction (1=Y+, -1=Y-)", Float) = 1
+        _FillDirection ("Fill Direction (1=Bottom to Top, -1=Top to Bottom)", Float) = 1
+        [Toggle] _InvertFill ("Invert Fill Direction", Float) = 0
     }
 
     SubShader
@@ -65,6 +66,7 @@ Shader "Industrial Reactor/Glass Pipe"
                 half _FlowSpeed;
                 half _FlowIntensity;
                 half _FillDirection;
+                half _InvertFill;
             CBUFFER_END
 
             // Simple noise
@@ -105,12 +107,23 @@ Shader "Industrial Reactor/Glass Pipe"
                 float fresnel = pow(1.0 - NdotV, 4.0);
                 
                 // Water fill based on UV.y
-                // If FillDirection > 0: fill from bottom (UV.y=0) upward
-                // If FillDirection < 0: fill from top (UV.y=1) downward
-                float fillCoord = _FillDirection > 0 ? IN.uv.y : (1.0 - IN.uv.y);
-                float waterMask = step(fillCoord, _FillProgress) * _FlowIntensity;
+                // Default: fill from bottom (UV.y=0) upward to top (UV.y=1)
+                // _FillDirection: 1 = normal (bottom to top), -1 = inverted (top to bottom)
+                // _InvertFill: additional toggle to invert if UV mapping is flipped
+                float uvY = IN.uv.y;
                 
-                // Animated water pattern
+                // Apply invert toggle first (fixes UV mapping issues)
+                if (_InvertFill > 0.5)
+                    uvY = 1.0 - uvY;
+                
+                // Then apply fill direction
+                float fillCoord = _FillDirection > 0 ? uvY : (1.0 - uvY);
+                
+                // Water shows where fillCoord < FillProgress
+                // Soft edge for smoother transition
+                float waterMask = smoothstep(_FillProgress + 0.02, _FillProgress - 0.02, fillCoord) * _FlowIntensity;
+                
+                // Animated water pattern - flow direction matches fill direction
                 float2 flowUV = IN.uv;
                 flowUV.y += time * _FlowSpeed * 0.1 * _FillDirection;
                 
