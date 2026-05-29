@@ -31,6 +31,8 @@ Shader "Industrial Reactor/Water"
         [Header(Surface Waves)]
         _WaveSpeed    ("Wave Speed", Float) = 1.0
         _WaveStrength ("Wave Strength", Range(0,0.1)) = 0.02
+        _WaveFrequency("Wave Frequency", Float) = 8.0
+        [Enum(X,0,Z,1,Both,2)] _WaveAxis ("Wave Axis", Float) = 1
 
         [Header(Swirl)]
         _SwirlSpeed   ("Swirl Speed", Range(0,200)) = 0
@@ -90,6 +92,8 @@ Shader "Industrial Reactor/Water"
                 half  _EmissionIntensity;
                 half  _WaveSpeed;
                 half  _WaveStrength;
+                half  _WaveFrequency;
+                half  _WaveAxis;
                 half  _SwirlSpeed;
             CBUFFER_END
 
@@ -108,9 +112,19 @@ Shader "Industrial Reactor/Water"
                 float3 posOS = IN.positionOS.xyz;
                 float fillCoord = GetFillCoord(posOS);
 
-                // Gentle surface waves near the water top only
+                // Gentle surface waves near the water top only.
+                // _WaveAxis selects which axis the ripples travel along:
+                //   0 = X only, 1 = Z only (default), 2 = both (radial-ish)
                 float t = _Time.y * _WaveSpeed;
-                float wave = sin(posOS.x * 10.0 + t) * cos(posOS.z * 8.0 + t * 0.7);
+                float freq = _WaveFrequency;
+                float wave;
+                if (_WaveAxis < 0.5)        // X only
+                    wave = sin(posOS.x * freq + t);
+                else if (_WaveAxis < 1.5)   // Z only
+                    wave = sin(posOS.z * freq + t);
+                else                        // Both
+                    wave = sin(posOS.x * freq + t) * cos(posOS.z * (freq * 0.8) + t * 0.7);
+
                 float topMask = smoothstep(_WaterLevel - 0.08, _WaterLevel, fillCoord);
                 posOS.y += wave * _WaveStrength * topMask;
 
