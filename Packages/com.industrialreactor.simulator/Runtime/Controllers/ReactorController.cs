@@ -10,6 +10,7 @@ namespace IndustrialReactorSimulator
     /// <summary>
     /// Main controller for the industrial reactor simulation.
     /// Manages simulation state and coordinates all sub-components.
+    /// Handles sequential flow: inlet pipe fills → tank fills → outlet pipe drains
     /// </summary>
     [AddComponentMenu("Industrial Reactor/Reactor Controller")]
     [DisallowMultipleComponent]
@@ -27,6 +28,7 @@ namespace IndustrialReactorSimulator
         [SerializeField] private BubbleEffectController bubbleEffect;
         [SerializeField] private PipeFlowVisualizer inletPipeFlow;
         [SerializeField] private PipeFlowVisualizer outletPipeFlow;
+        [SerializeField] private SimulationMaterialManager materialManager;
 
         [Header("Simulation Configuration")]
         [SerializeField] private ReactorSimulationData simulationData;
@@ -38,11 +40,19 @@ namespace IndustrialReactorSimulator
         [SerializeField] private float currentAgitatorRPM = 0f;
         [SerializeField] private float currentBubbleIntensity = 0f;
 
-        [Header("Control Parameters")]
-        [Range(0f, 100f)][SerializeField] private float inletFlowSpeed = 20f;
-        [Range(0f, 100f)][SerializeField] private float outletFlowSpeed = 15f;
+        [Header("Control Parameters (L/s)")]
+        [Tooltip("Inlet flow rate in Liters per second")]
+        [Range(0f, 100f)][SerializeField] private float inletFlowRateLPS = 20f;
+        [Tooltip("Outlet flow rate in Liters per second")]
+        [Range(0f, 100f)][SerializeField] private float outletFlowRateLPS = 15f;
         [Range(0f, 300f)][SerializeField] private float targetAgitatorRPM = 60f;
         [Range(0f, 100f)][SerializeField] private float targetTemperature = 25f;
+
+
+        [Header("Flow State (Read Only)")]
+        [SerializeField] private bool inletPipeFilled = false;
+        [SerializeField] private bool tankReceivingWater = false;
+        [SerializeField] private bool outletPipeDraining = false;
 
         // Properties
         public ReactorState CurrentState => currentState;
@@ -57,17 +67,29 @@ namespace IndustrialReactorSimulator
         public AgitatorController Agitator => agitator;
         public WaterSimulator WaterSim => waterSimulator;
 
-        public float InletFlowSpeed
+        public float InletFlowRateLPS
         {
-            get => inletFlowSpeed;
-            set => inletFlowSpeed = Mathf.Clamp(value, 0f, simulationData?.maxInletFlowRate ?? 100f);
+            get => inletFlowRateLPS;
+            set
+            {
+                inletFlowRateLPS = Mathf.Clamp(value, 0f, simulationData?.maxInletFlowRateLPS ?? 100f);
+                if (inletPipeFlow != null) inletPipeFlow.FlowRateLitersPerSecond = inletFlowRateLPS;
+            }
         }
 
-        public float OutletFlowSpeed
+        public float OutletFlowRateLPS
         {
-            get => outletFlowSpeed;
-            set => outletFlowSpeed = Mathf.Clamp(value, 0f, simulationData?.maxOutletFlowRate ?? 80f);
+            get => outletFlowRateLPS;
+            set
+            {
+                outletFlowRateLPS = Mathf.Clamp(value, 0f, simulationData?.maxOutletFlowRateLPS ?? 100f);
+                if (outletPipeFlow != null) outletPipeFlow.FlowRateLitersPerSecond = outletFlowRateLPS;
+            }
         }
+
+        // Legacy compatibility
+        public float InletFlowSpeed { get => inletFlowRateLPS; set => InletFlowRateLPS = value; }
+        public float OutletFlowSpeed { get => outletFlowRateLPS; set => OutletFlowRateLPS = value; }
 
         public float TargetAgitatorRPM
         {
@@ -81,6 +103,7 @@ namespace IndustrialReactorSimulator
             set => targetTemperature = Mathf.Clamp(value, simulationData?.minTemperature ?? 0f, simulationData?.maxTemperature ?? 100f);
         }
 
+
         private void Awake()
         {
             if (_instance != null && _instance != this) { Destroy(gameObject); return; }
@@ -89,8 +112,8 @@ namespace IndustrialReactorSimulator
             InitializeDefaultValues();
         }
 
-        private void OnEnable() => SubscribeToEvents();
-        private void OnDisable() => UnsubscribeFromEvents();
+        private void OnEnable() { SubscribeToEvents(); SubscribeToPipeEvents(); }
+        private void OnDisable() { UnsubscribeFromEvents(); UnsubscribeFromPipeEvents(); }
         private void OnDestroy() { if (_instance == this) _instance = null; }
 
         private void Update()
@@ -104,8 +127,8 @@ namespace IndustrialReactorSimulator
             if (simulationData == null) return;
             currentWaterLevel = simulationData.initialWaterLevel;
             currentTemperature = simulationData.ambientTemperature;
-            inletFlowSpeed = simulationData.defaultInletFlowRate;
-            outletFlowSpeed = simulationData.defaultOutletFlowRate;
+            inletFlowRateLPS = simulationData.defaultInletFlowRateLPS;
+            outletFlowRateLPS = simulationData.defaultOutletFlowRateLPS;
             targetAgitatorRPM = simulationData.defaultAgitatorRPM;
             targetTemperature = simulationData.ambientTemperature;
         }
@@ -120,12 +143,67 @@ namespace IndustrialReactorSimulator
 
         private void UnsubscribeFromEvents() => ReactorEvents.ClearAllEvents();
 
+        private void SubscribeToPipeEvents()
+        {
+            if (inletPipeFlow != null)
+            {
+                inletPipeFlow.OnPipeFilled += OnInletPipeFilled;
+                inletPipeFlow.OnPipeEmptied += OnInletPipeEmptied;
+            }
+            if (outletPipeFlow != null)
+            {
+                outletPipeFlow.OnPipeFilled += OnOutletPipeFilled;
+                outletPipeFlow.OnPipeEmptied += OnOutletPipeEmptied;
+            }
+        }
+
+        private void UnsubscribeFromPipeEvents()
+        {
+            if (inletPipeFlow != null)
+            {
+                inletPipeFlow.OnPipeFilled -= OnInletPipeFilled;
+                inletPipeFlow.OnPipeEmptied -= OnInletPipeEmptied;
+            }
+            if (outletPipeFlow != null)
+            {
+                outletPipeFlow.OnPipeFilled -= OnOutletPipeFilled;
+                outletPipeFlow.OnPipeEmptied -= OnOutletPipeEmptied;
+            }
+        }
+
+
+        // === PIPE FLOW EVENT HANDLERS ===
+        private void OnInletPipeFilled()
+        {
+            inletPipeFilled = true;
+            tankReceivingWater = true;
+            if (waterSimulator != null) waterSimulator.CanFill = true;
+            Debug.Log("[Reactor] Inlet pipe filled - tank now receiving water");
+        }
+
+        private void OnInletPipeEmptied()
+        {
+            inletPipeFilled = false;
+            tankReceivingWater = false;
+            if (waterSimulator != null) waterSimulator.CanFill = false;
+        }
+
+        private void OnOutletPipeFilled() { Debug.Log("[Reactor] Outlet pipe filled"); }
+        private void OnOutletPipeEmptied() { outletPipeDraining = false; }
+
+        // === PUBLIC CONTROL METHODS ===
         public void StartSimulation()
         {
             if (!Application.isPlaying) { Debug.LogWarning("[Reactor] Play Mode required."); return; }
             if (currentState == ReactorState.Running) return;
+
             SetState(ReactorState.Starting);
+            materialManager?.ActivateSimulationMode();
             tankCutaway?.ActivateCutaway();
+
+            if (inletPipeFlow != null) inletPipeFlow.FlowRateLitersPerSecond = inletFlowRateLPS;
+            if (outletPipeFlow != null) outletPipeFlow.FlowRateLitersPerSecond = outletFlowRateLPS;
+
             SetState(ReactorState.Running);
             ReactorEvents.RaiseSimulationStarted();
         }
@@ -134,9 +212,19 @@ namespace IndustrialReactorSimulator
         {
             if (currentState == ReactorState.Idle) return;
             SetState(ReactorState.Stopping);
-            inletValve?.CloseValve(); outletValve?.CloseValve();
+
+            inletValve?.CloseValve();
+            outletValve?.CloseValve();
             agitator?.StopAgitator();
-            inletPipeFlow?.StopFlow(); outletPipeFlow?.StopFlow();
+            inletPipeFlow?.StopFlow();
+            outletPipeFlow?.StopFlow();
+
+            if (waterSimulator != null) waterSimulator.CanFill = false;
+            inletPipeFilled = false;
+            tankReceivingWater = false;
+            outletPipeDraining = false;
+
+            materialManager?.DeactivateSimulationMode();
             SetState(ReactorState.Idle);
             ReactorEvents.RaiseSimulationStopped();
         }
@@ -144,20 +232,74 @@ namespace IndustrialReactorSimulator
         public void ResetSimulation()
         {
             if (currentState == ReactorState.Running) StopSimulation();
-            inletValve?.ResetValve(); outletValve?.ResetValve();
-            agitator?.ResetAgitator(); waterSimulator?.ResetWater();
-            tankCutaway?.DeactivateCutaway(); bubbleEffect?.ResetEffect();
-            inletPipeFlow?.ResetFlow(); outletPipeFlow?.ResetFlow();
+
+            inletValve?.ResetValve();
+            outletValve?.ResetValve();
+            agitator?.ResetAgitator();
+            waterSimulator?.ResetWater();
+            tankCutaway?.DeactivateCutaway();
+            bubbleEffect?.ResetEffect();
+            inletPipeFlow?.ResetFlow();
+            outletPipeFlow?.ResetFlow();
+            materialManager?.DeactivateSimulationMode();
+
+            inletPipeFilled = false;
+            tankReceivingWater = false;
+            outletPipeDraining = false;
+
             InitializeDefaultValues();
-            currentAgitatorRPM = 0f; currentBubbleIntensity = 0f;
+            currentAgitatorRPM = 0f;
+            currentBubbleIntensity = 0f;
+
             SetState(ReactorState.Idle);
             ReactorEvents.RaiseSimulationReset();
         }
 
-        public void OpenInletValve() { if (currentState != ReactorState.Running) return; inletValve?.OpenValve(); inletPipeFlow?.StartFlow(FlowDirection.Forward); }
-        public void CloseInletValve() { inletValve?.CloseValve(); inletPipeFlow?.StopFlow(); }
-        public void OpenOutletValve() { if (currentState != ReactorState.Running) return; outletValve?.OpenValve(); outletPipeFlow?.StartFlow(FlowDirection.Forward); }
-        public void CloseOutletValve() { outletValve?.CloseValve(); outletPipeFlow?.StopFlow(); }
+
+        /// <summary>
+        /// Open inlet valve - water flows through inlet pipe first, then fills tank
+        /// </summary>
+        public void OpenInletValve()
+        {
+            if (currentState != ReactorState.Running) return;
+            inletValve?.OpenValve();
+            if (inletPipeFlow != null)
+            {
+                inletPipeFlow.FlowRateLitersPerSecond = inletFlowRateLPS;
+                inletPipeFlow.StartFlow(FlowDirection.Forward);
+            }
+        }
+
+        public void CloseInletValve()
+        {
+            inletValve?.CloseValve();
+            inletPipeFlow?.StopFlow();
+            if (waterSimulator != null) waterSimulator.CanFill = false;
+            tankReceivingWater = false;
+        }
+
+        /// <summary>
+        /// Open outlet valve - water drains from tank through outlet pipe
+        /// </summary>
+        public void OpenOutletValve()
+        {
+            if (currentState != ReactorState.Running) return;
+            outletValve?.OpenValve();
+            outletPipeDraining = true;
+            if (outletPipeFlow != null)
+            {
+                outletPipeFlow.FlowRateLitersPerSecond = outletFlowRateLPS;
+                outletPipeFlow.StartFlow(FlowDirection.Forward);
+            }
+        }
+
+        public void CloseOutletValve()
+        {
+            outletValve?.CloseValve();
+            outletPipeFlow?.StopFlow();
+            outletPipeDraining = false;
+        }
+
         public void StartAgitator() { if (currentState != ReactorState.Running) return; agitator?.StartAgitator(targetAgitatorRPM); }
         public void StopAgitator() => agitator?.StopAgitator();
 
@@ -167,6 +309,9 @@ namespace IndustrialReactorSimulator
             if (agitator != null && agitator.IsRunning) agitator.SetTargetRPM(targetAgitatorRPM);
         }
 
+        public void SetInletFlowRate(float litersPerSecond) => InletFlowRateLPS = litersPerSecond;
+        public void SetOutletFlowRate(float litersPerSecond) => OutletFlowRateLPS = litersPerSecond;
+
         private void UpdateSimulation()
         {
             float deltaTime = Time.deltaTime * (simulationData?.simulationTimeScale ?? 1f);
@@ -175,11 +320,26 @@ namespace IndustrialReactorSimulator
             UpdateEffects();
         }
 
+
         private void UpdateWaterLevel(float deltaTime)
         {
             if (waterSimulator == null) return;
-            float inletFlow = inletValve != null && inletValve.IsOpen ? inletFlowSpeed * inletValve.OpenAmount : 0f;
-            float outletFlow = outletValve != null && outletValve.IsOpen ? outletFlowSpeed * outletValve.OpenAmount : 0f;
+
+            // Inlet flow only if valve open AND inlet pipe is filled
+            float inletFlow = 0f;
+            if (inletValve != null && inletValve.IsOpen && inletPipeFilled)
+                inletFlow = inletFlowRateLPS * inletValve.OpenAmount;
+
+            // Outlet flow if valve open
+            float outletFlow = 0f;
+            if (outletValve != null && outletValve.IsOpen)
+            {
+                outletFlow = outletFlowRateLPS * outletValve.OpenAmount;
+                // Keep outlet pipe filled while draining
+                if (outletPipeFlow != null && outletFlow > 0 && !outletPipeFlow.IsFilled && currentWaterLevel > 0.01f)
+                    outletPipeFlow.FillInstant();
+            }
+
             waterSimulator.UpdateWaterLevel(inletFlow, outletFlow, deltaTime);
         }
 
@@ -201,7 +361,11 @@ namespace IndustrialReactorSimulator
             waterSimulator?.SetSwirlSpeed(simulationData.GetSwirlSpeed(currentAgitatorRPM));
         }
 
-        private void SetState(ReactorState newState) { if (currentState != newState) { currentState = newState; ReactorEvents.RaiseSimulationStateChanged(currentState); } }
+        private void SetState(ReactorState newState)
+        {
+            if (currentState != newState) { currentState = newState; ReactorEvents.RaiseSimulationStateChanged(currentState); }
+        }
+
         public string GetStateString() => currentState.ToString();
 
 #if UNITY_EDITOR
@@ -215,6 +379,7 @@ namespace IndustrialReactorSimulator
             waterSimulator ??= GetComponentInChildren<WaterSimulator>();
             tankCutaway ??= GetComponentInChildren<TankCutawayController>();
             bubbleEffect ??= GetComponentInChildren<BubbleEffectController>();
+            materialManager ??= GetComponentInChildren<SimulationMaterialManager>();
             foreach (var p in GetComponentsInChildren<PipeFlowVisualizer>())
                 if (p.AssociatedValveType == ValveType.Inlet && inletPipeFlow == null) inletPipeFlow = p;
                 else if (p.AssociatedValveType == ValveType.Outlet && outletPipeFlow == null) outletPipeFlow = p;

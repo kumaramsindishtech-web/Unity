@@ -4,12 +4,14 @@
 // ============================================================================
 
 using UnityEngine;
+using System;
 using System.Collections;
 
 namespace IndustrialReactorSimulator
 {
     /// <summary>
-    /// Visualizes fluid flow through pipes using shader UV scrolling.
+    /// Visualizes fluid flow through pipes with fill progress and UV-based flow animation.
+    /// Supports sequential flow: water fills pipe first, then triggers tank fill callback.
     /// </summary>
     [AddComponentMenu("Industrial Reactor/Pipe Flow Visualizer")]
     public class PipeFlowVisualizer : MonoBehaviour
@@ -19,65 +21,172 @@ namespace IndustrialReactorSimulator
         [SerializeField] private Renderer pipeRenderer;
         [SerializeField] private int materialIndex = 0;
 
-        [Header("UV Scroll Settings")]
-        [SerializeField] private float scrollSpeed = 2f;
-        [SerializeField] private Vector2 scrollDirection = new Vector2(0f, 1f);
-        [SerializeField] private string uvOffsetProperty = "_MainTex_ST";
-        [SerializeField] private bool useBaseMapOffset = true;
+        [Header("Pipe Dimensions")]
+        [Tooltip("Length of the pipe in meters (for flow time calculation)")]
+        [SerializeField] private float pipeLength = 2f;
+        [Tooltip("Cross-sectional area of pipe in square meters")]
+        [SerializeField] private float pipeCrossSectionArea = 0.01f;
+
+        [Header("Flow Rate Settings (L/s)")]
+        [Tooltip("Flow rate in Liters per second")]
+        [Range(0.1f, 100f)]
+        [SerializeField] private float flowRateLitersPerSecond = 10f;
+        
+        [Header("Shader Properties")]
+        [SerializeField] private string fillProgressProperty = "_FillProgress";
+        [SerializeField] private string flowSpeedProperty = "_FlowSpeed";
+        [SerializeField] private string flowDirectionProperty = "_FlowDirection";
+        [SerializeField] private string flowIntensityProperty = "_FlowIntensity";
+
+        [Header("Visual Settings")]
+        [Tooltip("UV scroll speed multiplier for flow animation")]
+        [Range(0.1f, 10f)]
+        [SerializeField] private float flowAnimationSpeed = 2f;
+        [Tooltip("Flow direction: 1 = forward (top to bottom in UV), -1 = reverse")]
+        [SerializeField] private float flowDirectionMultiplier = 1f;
 
         [Header("Optional Particle Flow")]
         [SerializeField] private ParticleSystem flowParticles;
         [SerializeField] private float particleEmissionRate = 50f;
 
-        [Header("Flow Intensity")]
-        [SerializeField] private bool useValveFlowSpeed = true;
-        [Range(0.1f, 5f)][SerializeField] private float intensityMultiplier = 1f;
-
-        [Header("Transition")]
-        [Range(0.1f, 2f)][SerializeField] private float fadeTime = 0.3f;
+        [Header("Transition Settings")]
+        [Range(0.1f, 2f)]
+        [SerializeField] private float fadeTime = 0.3f;
 
         [Header("Runtime State")]
         [SerializeField] private bool isFlowing = false;
         [SerializeField] private FlowDirection flowDirection = FlowDirection.None;
         [SerializeField][Range(0f, 1f)] private float flowIntensity = 0f;
+        [SerializeField][Range(0f, 1f)] private float fillProgress = 0f;
+        [SerializeField] private PipeFlowState flowState = PipeFlowState.Empty;
 
-        private float currentOffset = 0f;
         private MaterialPropertyBlock propertyBlock;
+        private Coroutine fillCoroutine;
         private Coroutine fadeCoroutine;
 
+        // Events for sequential flow coordination
+        public event Action OnPipeFilled;
+        public event Action OnPipeEmptied;
+        public event Action<float> OnFillProgressChanged;
+
+        // Properties
         public ValveType AssociatedValveType => associatedValveType;
         public bool IsFlowing => isFlowing;
         public FlowDirection CurrentDirection => flowDirection;
         public float FlowIntensity => flowIntensity;
+        public float FillProgress => fillProgress;
+        public PipeFlowState FlowState => flowState;
+        public bool IsFilled => fillProgress >= 0.99f;
+        public bool IsEmpty => fillProgress <= 0.01f;
 
-        private void Awake() => propertyBlock = new MaterialPropertyBlock();
+        /// <summary>
+        /// Flow rate in Liters per second - editable in inspector
+        /// </summary>
+        public float FlowRateLitersPerSecond
+        {
+            get => flowRateLitersPerSecond;
+            set => flowRateLitersPerSecond = Mathf.Clamp(value, 0.1f, 100f);
+        }
+
+        /// <summary>
+        /// Pipe length in meters
+        /// </summary>
+        public float PipeLength
+        {
+            get => pipeLength;
+            set => pipeLength = Mathf.Max(0.1f, value);
+        }
+
+        /// <summary>
+        /// Calculate time to fill pipe based on flow rate
+        /// </summary>
+        public float CalculateFillTime()
+        {
+            // Volume = Length * CrossSection (in cubic meters)
+            float volumeCubicMeters = pipeLength * pipeCrossSectionArea;
+            // Convert to liters (1 cubic meter = 1000 liters)
+            float volumeLiters = volumeCubicMeters * 1000f;
+            // Time = Volume / FlowRate
+            return volumeLiters / flowRateLitersPerSecond;
+        }
+
+        private void Awake()
+        {
+            propertyBlock = new MaterialPropertyBlock();
+        }
+
+        private void Start()
+        {
+            UpdateMaterial();
+        }
 
         private void Update()
         {
             if (!Application.isPlaying) return;
-            if (isFlowing && flowIntensity > 0f) UpdateFlowAnimation();
+            
+            // Update continuous flow animation when flowing and filled
+            if (isFlowing && flowIntensity > 0f && fillProgress > 0f)
+            {
+                UpdateFlowAnimation();
+            }
         }
 
+        /// <summary>
+        /// Start filling the pipe with water flow animation.
+        /// Water visually fills from entry point to exit point based on flow direction.
+        /// </summary>
         public void StartFlow(FlowDirection direction)
         {
-            if (isFlowing && flowDirection == direction) return;
+            if (isFlowing && flowDirection == direction && flowState == PipeFlowState.Filled) return;
+
             flowDirection = direction;
             isFlowing = true;
+            flowDirectionMultiplier = direction == FlowDirection.Reverse ? -1f : 1f;
+
+            // Stop any existing coroutines
+            if (fillCoroutine != null) StopCoroutine(fillCoroutine);
             if (fadeCoroutine != null) StopCoroutine(fadeCoroutine);
-            fadeCoroutine = StartCoroutine(FadeFlow(1f));
-            if (flowParticles != null && !flowParticles.isPlaying) flowParticles.Play();
+
+            // Start fill animation
+            fillCoroutine = StartCoroutine(FillPipe());
+
+            // Start particles
+            if (flowParticles != null && !flowParticles.isPlaying)
+                flowParticles.Play();
         }
 
+        /// <summary>
+        /// Stop flow and drain the pipe
+        /// </summary>
         public void StopFlow()
         {
-            if (!isFlowing) return;
+            if (!isFlowing && flowState == PipeFlowState.Empty) return;
+
+            if (fillCoroutine != null) StopCoroutine(fillCoroutine);
             if (fadeCoroutine != null) StopCoroutine(fadeCoroutine);
-            fadeCoroutine = StartCoroutine(FadeFlow(0f));
+
+            fillCoroutine = StartCoroutine(DrainPipe());
         }
 
+        /// <summary>
+        /// Set fill progress directly (0-1)
+        /// </summary>
+        public void SetFillProgress(float progress)
+        {
+            fillProgress = Mathf.Clamp01(progress);
+            UpdateFlowState();
+            UpdateMaterial();
+            OnFillProgressChanged?.Invoke(fillProgress);
+        }
+
+        /// <summary>
+        /// Set flow intensity (0-1)
+        /// </summary>
         public void SetFlowIntensity(float intensity)
         {
             flowIntensity = Mathf.Clamp01(intensity);
+            UpdateMaterial();
+
             if (flowParticles != null)
             {
                 var emission = flowParticles.emission;
@@ -85,37 +194,138 @@ namespace IndustrialReactorSimulator
             }
         }
 
+        /// <summary>
+        /// Reset pipe to empty state
+        /// </summary>
         public void ResetFlow()
         {
+            if (fillCoroutine != null) { StopCoroutine(fillCoroutine); fillCoroutine = null; }
             if (fadeCoroutine != null) { StopCoroutine(fadeCoroutine); fadeCoroutine = null; }
+
             isFlowing = false;
             flowDirection = FlowDirection.None;
             flowIntensity = 0f;
-            currentOffset = 0f;
-            if (flowParticles != null) { flowParticles.Stop(); flowParticles.Clear(); }
+            fillProgress = 0f;
+            flowState = PipeFlowState.Empty;
+
+            if (flowParticles != null)
+            {
+                flowParticles.Stop();
+                flowParticles.Clear();
+            }
+
             UpdateMaterial();
         }
 
-        private void UpdateFlowAnimation()
+        /// <summary>
+        /// Instantly fill the pipe (skip animation)
+        /// </summary>
+        public void FillInstant()
         {
-            float directionMultiplier = flowDirection == FlowDirection.Reverse ? -1f : 1f;
-            currentOffset += scrollSpeed * intensityMultiplier * flowIntensity * directionMultiplier * Time.deltaTime;
-            if (currentOffset > 100f) currentOffset -= 100f;
-            if (currentOffset < -100f) currentOffset += 100f;
+            if (fillCoroutine != null) StopCoroutine(fillCoroutine);
+            
+            fillProgress = 1f;
+            flowIntensity = 1f;
+            flowState = PipeFlowState.Filled;
+            isFlowing = true;
+            
             UpdateMaterial();
+            OnFillProgressChanged?.Invoke(fillProgress);
+            OnPipeFilled?.Invoke();
         }
 
-        private void UpdateMaterial()
+        /// <summary>
+        /// Instantly empty the pipe (skip animation)
+        /// </summary>
+        public void EmptyInstant()
         {
-            if (pipeRenderer == null) return;
-            pipeRenderer.GetPropertyBlock(propertyBlock, materialIndex);
-            Vector2 offset = scrollDirection * currentOffset;
-            if (useBaseMapOffset) propertyBlock.SetVector("_BaseMap_ST", new Vector4(1, 1, offset.x, offset.y));
-            else propertyBlock.SetVector(uvOffsetProperty, new Vector4(1, 1, offset.x, offset.y));
-            pipeRenderer.SetPropertyBlock(propertyBlock, materialIndex);
+            if (fillCoroutine != null) StopCoroutine(fillCoroutine);
+            
+            fillProgress = 0f;
+            flowIntensity = 0f;
+            flowState = PipeFlowState.Empty;
+            isFlowing = false;
+            flowDirection = FlowDirection.None;
+            
+            UpdateMaterial();
+            OnFillProgressChanged?.Invoke(fillProgress);
+            OnPipeEmptied?.Invoke();
         }
 
-        private IEnumerator FadeFlow(float targetIntensity)
+        private IEnumerator FillPipe()
+        {
+            flowState = PipeFlowState.Filling;
+            float fillTime = CalculateFillTime();
+            float startProgress = fillProgress;
+            float elapsed = 0f;
+
+            // Fade in flow intensity
+            fadeCoroutine = StartCoroutine(FadeFlowIntensity(1f));
+
+            while (elapsed < fillTime && fillProgress < 1f)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / fillTime);
+                
+                // Smooth fill with slight ease-out
+                fillProgress = Mathf.Lerp(startProgress, 1f, t * t * (3f - 2f * t));
+                
+                UpdateMaterial();
+                OnFillProgressChanged?.Invoke(fillProgress);
+                
+                yield return null;
+            }
+
+            fillProgress = 1f;
+            flowState = PipeFlowState.Filled;
+            UpdateMaterial();
+            OnFillProgressChanged?.Invoke(fillProgress);
+            
+            // Notify that pipe is filled - tank can start filling
+            OnPipeFilled?.Invoke();
+            
+            fillCoroutine = null;
+        }
+
+        private IEnumerator DrainPipe()
+        {
+            flowState = PipeFlowState.Draining;
+            float drainTime = CalculateFillTime();
+            float startProgress = fillProgress;
+            float elapsed = 0f;
+
+            while (elapsed < drainTime && fillProgress > 0f)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / drainTime);
+                
+                fillProgress = Mathf.Lerp(startProgress, 0f, t);
+                
+                UpdateMaterial();
+                OnFillProgressChanged?.Invoke(fillProgress);
+                
+                yield return null;
+            }
+
+            fillProgress = 0f;
+            flowState = PipeFlowState.Empty;
+            isFlowing = false;
+            flowDirection = FlowDirection.None;
+
+            // Fade out flow intensity
+            fadeCoroutine = StartCoroutine(FadeFlowIntensity(0f));
+
+            if (flowParticles != null)
+                flowParticles.Stop();
+
+            UpdateMaterial();
+            OnFillProgressChanged?.Invoke(fillProgress);
+            OnPipeEmptied?.Invoke();
+            
+            fillCoroutine = null;
+        }
+
+        private IEnumerator FadeFlowIntensity(float targetIntensity)
         {
             float startIntensity = flowIntensity;
             float elapsed = 0f;
@@ -124,22 +334,84 @@ namespace IndustrialReactorSimulator
             {
                 elapsed += Time.deltaTime;
                 flowIntensity = Mathf.Lerp(startIntensity, targetIntensity, Mathf.Clamp01(elapsed / fadeTime));
+                
                 if (flowParticles != null)
                 {
                     var emission = flowParticles.emission;
                     emission.rateOverTime = particleEmissionRate * flowIntensity;
                 }
+                
+                UpdateMaterial();
                 yield return null;
             }
 
             flowIntensity = targetIntensity;
-            if (targetIntensity <= 0f)
-            {
-                isFlowing = false;
-                flowDirection = FlowDirection.None;
-                if (flowParticles != null) flowParticles.Stop();
-            }
+            UpdateMaterial();
             fadeCoroutine = null;
         }
+
+        private void UpdateFlowAnimation()
+        {
+            // Continuous flow animation is handled by shader using _Time
+            // We just ensure the material properties are up to date
+            UpdateMaterial();
+        }
+
+        private void UpdateMaterial()
+        {
+            if (pipeRenderer == null) return;
+
+            pipeRenderer.GetPropertyBlock(propertyBlock, materialIndex);
+            
+            propertyBlock.SetFloat(fillProgressProperty, fillProgress);
+            propertyBlock.SetFloat(flowSpeedProperty, flowAnimationSpeed);
+            propertyBlock.SetFloat(flowDirectionProperty, flowDirectionMultiplier);
+            propertyBlock.SetFloat(flowIntensityProperty, flowIntensity);
+            
+            pipeRenderer.SetPropertyBlock(propertyBlock, materialIndex);
+        }
+
+        private void UpdateFlowState()
+        {
+            if (fillProgress <= 0.01f)
+                flowState = PipeFlowState.Empty;
+            else if (fillProgress >= 0.99f)
+                flowState = PipeFlowState.Filled;
+            else if (isFlowing)
+                flowState = flowDirection != FlowDirection.None ? PipeFlowState.Filling : PipeFlowState.Draining;
+        }
+
+#if UNITY_EDITOR
+        [ContextMenu("Test Fill Pipe")]
+        private void TestFillPipe()
+        {
+            if (Application.isPlaying)
+                StartFlow(FlowDirection.Forward);
+        }
+
+        [ContextMenu("Test Drain Pipe")]
+        private void TestDrainPipe()
+        {
+            if (Application.isPlaying)
+                StopFlow();
+        }
+
+        [ContextMenu("Log Fill Time")]
+        private void LogFillTime()
+        {
+            Debug.Log($"[PipeFlow] Fill time at {flowRateLitersPerSecond} L/s: {CalculateFillTime():F2} seconds");
+        }
+#endif
+    }
+
+    /// <summary>
+    /// State of pipe flow
+    /// </summary>
+    public enum PipeFlowState
+    {
+        Empty,
+        Filling,
+        Filled,
+        Draining
     }
 }

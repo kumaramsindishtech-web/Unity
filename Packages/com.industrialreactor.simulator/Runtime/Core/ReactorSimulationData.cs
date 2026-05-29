@@ -26,10 +26,28 @@ namespace IndustrialReactorSimulator
 
         [Header("Valve Settings")]
         [Range(0.1f, 5f)] public float valveTransitionTime = 0.5f;
-        [Range(1f, 100f)] public float defaultInletFlowRate = 20f;
-        [Range(1f, 100f)] public float defaultOutletFlowRate = 15f;
-        [Range(10f, 200f)] public float maxInletFlowRate = 100f;
-        [Range(10f, 200f)] public float maxOutletFlowRate = 80f;
+
+        [Header("Flow Rate Settings (Liters per Second)")]
+        [Tooltip("Default inlet flow rate in L/s")]
+        [Range(1f, 100f)] public float defaultInletFlowRateLPS = 20f;
+        [Tooltip("Default outlet flow rate in L/s")]
+        [Range(1f, 100f)] public float defaultOutletFlowRateLPS = 15f;
+        [Tooltip("Maximum inlet flow rate in L/s")]
+        [Range(10f, 200f)] public float maxInletFlowRateLPS = 100f;
+        [Tooltip("Maximum outlet flow rate in L/s")]
+        [Range(10f, 200f)] public float maxOutletFlowRateLPS = 80f;
+
+        [Header("Pipe Settings")]
+        [Tooltip("Default pipe length in meters")]
+        [Range(0.5f, 10f)] public float defaultPipeLength = 2f;
+        [Tooltip("Default pipe cross-section area in m²")]
+        [Range(0.001f, 0.1f)] public float defaultPipeCrossSectionArea = 0.01f;
+
+        // Legacy compatibility
+        public float defaultInletFlowRate => defaultInletFlowRateLPS;
+        public float defaultOutletFlowRate => defaultOutletFlowRateLPS;
+        public float maxInletFlowRate => maxInletFlowRateLPS;
+        public float maxOutletFlowRate => maxOutletFlowRateLPS;
 
         [Header("Agitator Settings")]
         [Range(10f, 500f)] public float defaultAgitatorRPM = 60f;
@@ -71,7 +89,21 @@ namespace IndustrialReactorSimulator
         public float GetNormalizedRPM(float rpm) => Mathf.Clamp01(rpm / maxAgitatorRPM);
         public float GetBubbleIntensity(float rpm) => Mathf.Lerp(0f, 1f, GetNormalizedRPM(rpm));
         public float GetSwirlSpeed(float rpm) => Mathf.Lerp(0f, maxSwirlSpeed, GetNormalizedRPM(rpm));
-        public float CalculateFillTime(float flowRate) => flowRate <= 0f ? float.MaxValue : tankCapacity / flowRate;
+        
+        /// <summary>
+        /// Calculate time to fill tank at given flow rate
+        /// </summary>
+        public float CalculateFillTime(float flowRateLPS) => flowRateLPS <= 0f ? float.MaxValue : tankCapacity / flowRateLPS;
+        
+        /// <summary>
+        /// Calculate time to fill a pipe based on its dimensions and flow rate
+        /// </summary>
+        public float CalculatePipeFillTime(float pipeLengthMeters, float crossSectionM2, float flowRateLPS)
+        {
+            if (flowRateLPS <= 0f) return float.MaxValue;
+            float volumeLiters = pipeLengthMeters * crossSectionM2 * 1000f; // Convert m³ to liters
+            return volumeLiters / flowRateLPS;
+        }
 
         public void ResetToDefaults()
         {
@@ -82,10 +114,12 @@ namespace IndustrialReactorSimulator
             emptyThreshold = 0.01f;
             fullThreshold = 0.99f;
             valveTransitionTime = 0.5f;
-            defaultInletFlowRate = 20f;
-            defaultOutletFlowRate = 15f;
-            maxInletFlowRate = 100f;
-            maxOutletFlowRate = 80f;
+            defaultInletFlowRateLPS = 20f;
+            defaultOutletFlowRateLPS = 15f;
+            maxInletFlowRateLPS = 100f;
+            maxOutletFlowRateLPS = 80f;
+            defaultPipeLength = 2f;
+            defaultPipeCrossSectionArea = 0.01f;
             defaultAgitatorRPM = 60f;
             maxAgitatorRPM = 300f;
             agitatorSpinUpTime = 2f;
