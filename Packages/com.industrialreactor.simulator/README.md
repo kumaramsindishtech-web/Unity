@@ -8,6 +8,23 @@ Professional Unity addon for industrial reactor simulation with custom editor UI
 
 ---
 
+## Quick Reference - Component Mapping
+
+| Your GameObject | Add This Component | Key Settings |
+|-----------------|-------------------|--------------|
+| **Reactor** | ReactorController | Assign all child references |
+| **Tank** | TankCutawayController | Cutaway Mode: ShaderClipping |
+| **Metal** | TankCutawayController | (If separate from Tank) |
+| **Water** | WaterSimulator | Scale Mode: ScaleY |
+| **Water** | BubbleEffectController | Assign particle system |
+| **Agitator** | AgitatorController | Rotation Axis: (0,1,0) |
+| **Inlet_pipe** | PipeFlowVisualizer | Valve Type: Inlet |
+| **Outlet_Pipe** | PipeFlowVisualizer | Valve Type: Outlet |
+| **Valve_Inlet** | ValveController | Valve Type: Inlet |
+| **Valve_outlet** | ValveController | Valve Type: Outlet |
+
+---
+
 ## Table of Contents
 
 1. [Features](#features)
@@ -86,30 +103,35 @@ https://github.com/kumaramsindishtech-web/Unity.git?path=Packages/com.industrial
 
 ## Complete Setup Guide
 
-### Step 1: Prepare Your Scene Hierarchy
+### Step 1: Your Scene Hierarchy
 
-Create this exact hierarchy in your scene. You can use existing 3D models or create primitive shapes for testing:
+Based on your existing reactor model, you should have this hierarchy:
 
 ```
-Reactor                    ← Empty GameObject (parent)
-├── Tank                   ← Your tank 3D model
-├── Water                  ← Cylinder or custom water mesh
-├── Agitator               ← Your agitator/mixer 3D model
-├── Inlet_pipe             ← Pipe 3D model for inlet
-├── Outlet_Pipe            ← Pipe 3D model for outlet
-├── Valve_Inlet            ← Valve 3D model for inlet
-└── Valve_Outlet           ← Valve 3D model for outlet
+SampleScene
+├── Main Camera
+├── Directional Light
+├── Global Volume
+└── Reactor                    ← Add ReactorController here
+    ├── Agitator               ← Add AgitatorController here
+    ├── Inlet_pipe             ← Add PipeFlowVisualizer here
+    ├── Metal                  ← (Optional) Tank body/shell
+    ├── Outlet_Pipe            ← Add PipeFlowVisualizer here
+    ├── Tank                   ← Add TankCutawayController here
+    ├── Valve_Inlet            ← Add ValveController here
+    ├── Valve_outlet           ← Add ValveController here
+    └── Water                  ← Add WaterSimulator + BubbleEffectController here
 ```
 
-**To create test objects:**
-1. Right-click in Hierarchy → **Create Empty** → Name it "Reactor"
-2. Right-click on Reactor → **3D Object → Cylinder** → Name it "Tank"
-3. Right-click on Reactor → **3D Object → Cylinder** → Name it "Water" (scale smaller)
-4. Right-click on Reactor → **3D Object → Cylinder** → Name it "Agitator"
-5. Right-click on Reactor → **3D Object → Capsule** → Name it "Inlet_pipe"
-6. Right-click on Reactor → **3D Object → Capsule** → Name it "Outlet_Pipe"
-7. Right-click on Reactor → **3D Object → Cube** → Name it "Valve_Inlet"
-8. Right-click on Reactor → **3D Object → Cube** → Name it "Valve_Outlet"
+**Your Model Components:**
+- **Tank** - The main cylindrical vessel (white dome-top tank)
+- **Metal** - Tank body/shell (may need TankCutaway shader too)
+- **Agitator** - Motor assembly on top with rotating shaft
+- **Inlet_pipe** - Pipe entering from top/side
+- **Outlet_Pipe** - Pipe exiting from bottom
+- **Valve_Inlet** - Valve on inlet pipe
+- **Valve_outlet** - Valve on outlet pipe  
+- **Water** - Water mesh inside tank (needs to be inside the tank)
 
 ---
 
@@ -119,122 +141,153 @@ Reactor                    ← Empty GameObject (parent)
 
 **GameObject:** `Reactor` (parent object)
 
-1. Select the **Reactor** GameObject
-2. Click **Add Component**
-3. Search for **"Reactor Controller"**
-4. Add the component
+1. Select the **Reactor** GameObject in Hierarchy
+2. In Inspector, click **Add Component**
+3. Type **"Reactor Controller"** in search
+4. Click to add the component
 
-**Inspector Settings:**
-| Field | What to Assign |
-|-------|----------------|
-| Inlet Valve | Drag `Valve_Inlet` GameObject here |
-| Outlet Valve | Drag `Valve_Outlet` GameObject here |
-| Agitator | Drag `Agitator` GameObject here |
-| Water Simulator | Drag `Water` GameObject here |
-| Tank Cutaway | Drag `Tank` GameObject here |
-| Bubble Effect | Drag `Water` GameObject here (or child with particles) |
-| Inlet Pipe Flow | Drag `Inlet_pipe` GameObject here |
-| Outlet Pipe Flow | Drag `Outlet_Pipe` GameObject here |
+**Inspector Settings - Drag these GameObjects to the fields:**
+
+| Field | Drag This GameObject |
+|-------|---------------------|
+| Inlet Valve | `Valve_Inlet` |
+| Outlet Valve | `Valve_outlet` |
+| Agitator | `Agitator` |
+| Water Simulator | `Water` |
+| Tank Cutaway | `Tank` (or `Metal` if that's the main tank body) |
+| Bubble Effect | `Water` |
+| Inlet Pipe Flow | `Inlet_pipe` |
+| Outlet Pipe Flow | `Outlet_Pipe` |
 | Simulation Data | Create and assign (see Step 3) |
 
-**Quick Setup:** Right-click on ReactorController component → **"Auto Find Components"**
+**Quick Setup Tip:** After adding all other components to child objects, right-click on ReactorController → **"Auto Find Components"** to auto-assign references.
 
 ---
 
 #### 2.2 ValveController (Add to BOTH valves)
 
-**GameObjects:** `Valve_Inlet` AND `Valve_Outlet`
+**GameObjects:** `Valve_Inlet` AND `Valve_outlet`
 
-1. Select **Valve_Inlet**
-2. Click **Add Component** → Search **"Valve Controller"**
-3. Repeat for **Valve_Outlet**
+**For Valve_Inlet:**
+1. Select **Valve_Inlet** in Hierarchy
+2. Click **Add Component** → Type **"Valve Controller"** → Add it
+3. Configure in Inspector:
 
-**Inspector Settings for Valve_Inlet:**
 | Field | Value |
 |-------|-------|
-| Valve Type | **Inlet** |
-| Valve Handle | Drag the rotating part (or self) |
+| Valve Type | **Inlet** ← Select from dropdown |
+| Valve Handle | Drag `Valve_Inlet` itself (or its rotating child) |
 | Rotation Axis | (0, 1, 0) for Y-axis rotation |
-| Open Rotation | 90 (degrees) |
+| Open Rotation | 90 |
 | Transition Time | 0.5 |
-| Valve Renderer | Drag the valve's MeshRenderer |
+| Valve Renderer | Drag `Valve_Inlet`'s MeshRenderer component |
+| Color Property Name | _BaseColor |
+| Closed Color | Red (255, 0, 0) |
+| Open Color | Green (0, 255, 0) |
+
+**For Valve_outlet:**
+1. Select **Valve_outlet** in Hierarchy
+2. Click **Add Component** → Type **"Valve Controller"** → Add it
+3. Configure in Inspector:
+
+| Field | Value |
+|-------|-------|
+| Valve Type | **Outlet** ← Select from dropdown |
+| Valve Handle | Drag `Valve_outlet` itself |
+| Rotation Axis | (0, 1, 0) |
+| Open Rotation | 90 |
+| Transition Time | 0.5 |
+| Valve Renderer | Drag `Valve_outlet`'s MeshRenderer |
 | Closed Color | Red |
 | Open Color | Green |
-
-**Inspector Settings for Valve_Outlet:**
-| Field | Value |
-|-------|-------|
-| Valve Type | **Outlet** |
-| (other settings same as above) |
 
 ---
 
 #### 2.3 AgitatorController
 
-**GameObject:** `Agitator`
+**GameObject:** `Agitator` (the motor/mixer on top of tank)
 
-1. Select **Agitator**
-2. Click **Add Component** → Search **"Agitator Controller"**
+1. Select **Agitator** in Hierarchy
+2. Click **Add Component** → Type **"Agitator Controller"** → Add it
+3. Configure in Inspector:
 
-**Inspector Settings:**
-| Field | Value |
-|-------|-------|
-| Agitator Transform | Drag the rotating part (or self) |
-| Rotation Axis | (0, 1, 0) for Y-axis |
-| Max RPM | 300 |
-| Spin Up Time | 2 |
-| Spin Down Time | 3 |
-| Motor Audio | (Optional) AudioSource for motor sound |
+| Field | Value | Notes |
+|-------|-------|-------|
+| Agitator Transform | Drag `Agitator` or its rotating shaft child | This is what rotates |
+| Rotation Axis | (0, 1, 0) | Y-axis for vertical rotation |
+| Max RPM | 300 | Maximum rotation speed |
+| Spin Up Time | 2 | Seconds to reach full speed |
+| Spin Down Time | 3 | Seconds to stop |
+| Motor Audio | (Optional) | Drag an AudioSource for motor sound |
+| Max Audio Pitch | 1.5 | Pitch at max RPM |
+
+**Note:** If your agitator has a separate rotating shaft inside, drag that child object to "Agitator Transform" instead of the parent.
 
 ---
 
 #### 2.4 WaterSimulator
 
-**GameObject:** `Water`
+**GameObject:** `Water` (the water mesh inside your tank)
 
-1. Select **Water**
-2. Click **Add Component** → Search **"Water Simulator"**
+1. Select **Water** in Hierarchy
+2. Click **Add Component** → Type **"Water Simulator"** → Add it
+3. Configure in Inspector:
 
-**Inspector Settings:**
-| Field | Value |
-|-------|-------|
-| Water Mesh | Drag the Water transform itself |
-| Scale Mode | **ScaleY** (recommended) |
-| Min Scale | 0.01 |
-| Max Scale | 1.0 |
-| Tank Capacity | 1000 |
-| Water Renderer | Drag Water's MeshRenderer |
-| Use Material Property Block | ✓ Checked |
+| Field | Value | Notes |
+|-------|-------|-------|
+| Water Mesh | Drag `Water` transform | The mesh that will scale |
+| Scale Mode | **ScaleY** | Recommended for vertical fill |
+| Min Scale | 0.01 | Scale when tank is empty |
+| Max Scale | 1.0 | Scale when tank is full |
+| Empty Position Offset | (0, 0, 0) | Position adjustment when empty |
+| Full Position Offset | (0, 0, 0) | Position adjustment when full |
+| Tank Capacity | 1000 | Liters |
+| Water Renderer | Drag `Water`'s MeshRenderer | For shader updates |
+| Use Material Property Block | ✓ ON | Better performance |
 
 **Scale Mode Options:**
-- **ScaleY** - Water scales vertically (Y-axis only)
-- **ScaleXYZ** - Uniform scaling
-- **MoveAndScale** - Moves position and scales
-- **ShaderOnly** - Only updates shader, no mesh changes
+- **ScaleY** - Only scales Y axis (water rises/falls vertically) ← **Use this**
+- **ScaleXYZ** - Uniform scaling (rarely needed)
+- **MoveAndScale** - Moves and scales (for bottom-anchored water)
+- **ShaderOnly** - Only updates shader properties
+
+**Important:** Make sure your Water mesh is positioned at the BOTTOM of the tank interior. When Scale Mode is ScaleY, it will grow upward from its pivot point.
 
 ---
 
 #### 2.5 TankCutawayController
 
-**GameObject:** `Tank`
+**GameObject:** `Tank` (or `Metal` if that's your main tank mesh)
 
-1. Select **Tank**
-2. Click **Add Component** → Search **"Tank Cutaway Controller"**
+1. Select **Tank** in Hierarchy
+2. Click **Add Component** → Type **"Tank Cutaway Controller"** → Add it
+3. Configure in Inspector:
 
-**Inspector Settings:**
-| Field | Value |
-|-------|-------|
-| Cutaway Mode | **ShaderClipping** |
-| Tank Renderer | Drag Tank's MeshRenderer |
-| Cutaway Plane | (Optional) Empty transform for plane position |
-| Clip Direction | (1, 0, 0) for X-axis cut |
-| Transition Time | 0.5 |
-| Smooth Transition | ✓ Checked |
+| Field | Value | Notes |
+|-------|-------|-------|
+| Cutaway Mode | **ShaderClipping** | Uses shader to cut tank |
+| Tank Renderer | Drag `Tank`'s MeshRenderer | Required for shader mode |
+| Cutaway Plane | (Optional) Empty transform | Leave empty to use object center |
+| Clip Direction | (1, 0, 0) | X-axis = side cut |
+| Clip Plane Property | _ClipPlane | Shader property name |
+| Clip Dir Property | _ClipDir | Shader property name |
+| Front Half Mesh | (Optional) | For MeshHiding mode only |
+| Interior Mesh | (Optional) | For MeshHiding mode only |
+| Transition Time | 0.5 | Seconds |
+| Smooth Transition | ✓ ON | Animated cutaway |
 
 **Cutaway Mode Options:**
-- **ShaderClipping** - Uses shader to clip geometry (requires Tank Cutaway shader)
-- **MeshHiding** - Hides front mesh, shows interior mesh
-- **Combined** - Both methods
+- **ShaderClipping** - Uses Tank Cutaway shader to clip geometry ← **Recommended**
+- **MeshHiding** - Hides front mesh object, shows interior mesh
+- **Combined** - Uses both methods
+
+**Clip Direction Guide:**
+- `(1, 0, 0)` = Cut from right side (shows left interior)
+- `(-1, 0, 0)` = Cut from left side (shows right interior)
+- `(0, 0, 1)` = Cut from front (shows back interior)
+- `(0, 0, -1)` = Cut from back (shows front interior)
+
+**Note:** If you have both `Tank` and `Metal` objects, you may need to add TankCutawayController to BOTH and use the same cutaway shader on both materials.
 
 ---
 
@@ -263,26 +316,40 @@ Reactor                    ← Empty GameObject (parent)
 
 **GameObjects:** `Inlet_pipe` AND `Outlet_Pipe`
 
-1. Select **Inlet_pipe**
-2. Click **Add Component** → Search **"Pipe Flow Visualizer"**
-3. Repeat for **Outlet_Pipe**
+**For Inlet_pipe:**
+1. Select **Inlet_pipe** in Hierarchy
+2. Click **Add Component** → Type **"Pipe Flow Visualizer"** → Add it
+3. Configure in Inspector:
 
-**Inspector Settings for Inlet_pipe:**
-| Field | Value |
-|-------|-------|
-| Associated Valve Type | **Inlet** |
-| Pipe Renderer | Drag pipe's MeshRenderer |
-| Scroll Speed | 2 |
-| Scroll Direction | (0, 1) - along pipe |
-| Use Base Map Offset | ✓ Checked |
-| Flow Particles | (Optional) ParticleSystem |
-| Fade Time | 0.3 |
+| Field | Value | Notes |
+|-------|-------|-------|
+| Associated Valve Type | **Inlet** | Must match valve type |
+| Pipe Renderer | Drag `Inlet_pipe`'s MeshRenderer | |
+| Material Index | 0 | Usually 0 unless multiple materials |
+| Scroll Speed | 2 | Flow animation speed |
+| Scroll Direction | (0, 1) | Along pipe length |
+| Use Base Map Offset | ✓ ON | For URP Lit shader |
+| Flow Particles | (Optional) | ParticleSystem for flow effect |
+| Particle Emission Rate | 50 | |
+| Intensity Multiplier | 1 | |
+| Fade Time | 0.3 | Seconds |
 
-**Inspector Settings for Outlet_Pipe:**
+**For Outlet_Pipe:**
+1. Select **Outlet_Pipe** in Hierarchy
+2. Click **Add Component** → Type **"Pipe Flow Visualizer"** → Add it
+3. Configure:
+
 | Field | Value |
 |-------|-------|
 | Associated Valve Type | **Outlet** |
+| Pipe Renderer | Drag `Outlet_Pipe`'s MeshRenderer |
 | (other settings same as above) |
+
+**Scroll Direction Guide:**
+- The scroll direction should follow the pipe's UV layout
+- `(0, 1)` = Scroll along V axis (vertical in UV)
+- `(1, 0)` = Scroll along U axis (horizontal in UV)
+- You may need to experiment based on your pipe model's UVs
 
 ---
 
