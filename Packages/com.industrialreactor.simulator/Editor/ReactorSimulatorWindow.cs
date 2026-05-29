@@ -107,7 +107,7 @@ namespace IndustrialReactorSimulator.Editor
             EditorGUILayout.EndVertical();
         }
 
-        private void FindReactor() { if (reactor == null) reactor = FindObjectOfType<ReactorController>(); }
+        private void FindReactor() { if (reactor == null) reactor = FindFirstObjectByType<ReactorController>(); }
 
         private void CreateReactorController()
         {
