@@ -58,12 +58,12 @@ Shader "Industrial Reactor/Glass Pipe"
         _SurfaceWaveAmp   ("Surface Wave Amplitude", Range(0,0.05)) = 0.015
         _SurfaceWaveFreq  ("Surface Wave Frequency", Range(1,30))   = 12.0
 
-        [Header(Fill (UV based))]
-        _FillProgress     ("Fill Progress (0-1)", Range(0,1)) = 0.0
-        [Enum(Plus V (UV.y +),1, Minus V (UV.y -),-1)] _FlowDir ("Fill / Scroll Direction", Float) = 1
-        [Toggle] _InvertFill ("Invert (runtime)", Float) = 0
+        [Header(Fill UV based)]
+        _FillProgress     ("Fill Progress 0-1", Range(0,1)) = 0.0
+        [Enum(Plus V, 1, Minus V, 0)] _FlowDir ("Fill UV.y Direction", Float) = 1
+        [Toggle] _InvertFill ("Invert Runtime", Float) = 0
         _UVTiling         ("Length UV Tiling", Float) = 1.0
-        _FlowIntensity    ("Flow Intensity (opacity)", Range(0,1)) = 1.0
+        _FlowIntensity    ("Flow Intensity Opacity", Range(0,1)) = 1.0
 
         [HideInInspector] _TimeOffset ("Time Offset", Float) = 0
     }
@@ -135,8 +135,10 @@ Shader "Industrial Reactor/Glass Pipe"
 
             half4 frag(Varyings IN) : SV_Target
             {
-                // Effective direction: material dropdown combined with runtime invert.
-                float dir = _FlowDir * ((_InvertFill > 0.5) ? -1.0 : 1.0);
+                // Effective direction: material dropdown (1 = +V, 0 = -V) combined
+                // with the runtime invert toggle.
+                float baseDir = (_FlowDir > 0.5) ? 1.0 : -1.0;
+                float dir = baseDir * ((_InvertFill > 0.5) ? -1.0 : 1.0);
 
                 // V coordinate runs along the pipe length (follows bends).
                 float v = frac(IN.uv.y * _UVTiling);
