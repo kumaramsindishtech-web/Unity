@@ -10,7 +10,7 @@ namespace IndustrialReactorSimulator
 {
     /// <summary>
     /// Controls the tank cutaway effect for visualizing interior.
-    /// Supports dual-material setup: Slot 0 = Metal (always visible on remaining half), Slot 1 = Cutaway shader
+    /// Works with the Tank Cutaway shader to clip part of the tank mesh.
     /// </summary>
     [AddComponentMenu("Industrial Reactor/Tank Cutaway Controller")]
     public class TankCutawayController : MonoBehaviour
@@ -20,14 +20,14 @@ namespace IndustrialReactorSimulator
 
         [Header("Renderer Settings")]
         [SerializeField] private Renderer tankRenderer;
-        [Tooltip("Material slot for metal material (remains visible on cut half)")]
-        [SerializeField] private int metalMaterialSlot = 0;
-        [Tooltip("Material slot for cutaway shader")]
-        [SerializeField] private int cutawayMaterialSlot = 1;
+        [Tooltip("Material index for the cutaway material (usually 0 or 1)")]
+        [SerializeField] private int materialIndex = 0;
 
         [Header("Shader Clipping Settings")]
         [SerializeField] private Transform cutawayPlane;
         [SerializeField] private Vector3 clipDirection = Vector3.right;
+        
+        [Header("Shader Property Names")]
         [SerializeField] private string clipPlaneProperty = "_ClipPlane";
         [SerializeField] private string clipDirProperty = "_ClipDir";
         [SerializeField] private string enableClipProperty = "_EnableClip";
@@ -45,7 +45,6 @@ namespace IndustrialReactorSimulator
         [SerializeField][Range(0f, 1f)] private float cutawayAmount = 0f;
 
         private MaterialPropertyBlock propertyBlock;
-        private MaterialPropertyBlock metalPropertyBlock;
         private Coroutine transitionCoroutine;
         private Vector4 clipPlaneVector;
 
@@ -55,35 +54,41 @@ namespace IndustrialReactorSimulator
         private void Awake()
         {
             propertyBlock = new MaterialPropertyBlock();
-            metalPropertyBlock = new MaterialPropertyBlock();
             UpdateClipPlane();
         }
 
         private void Start()
         {
-            if (!isCutawayActive) SetCutawayImmediate(false);
+            // Start with cutaway disabled
+            SetCutawayImmediate(false);
         }
 
         public void ActivateCutaway()
         {
             if (isCutawayActive) return;
             if (transitionCoroutine != null) StopCoroutine(transitionCoroutine);
-            if (smoothTransition) transitionCoroutine = StartCoroutine(TransitionCutaway(true));
-            else SetCutawayImmediate(true);
+            if (smoothTransition) 
+                transitionCoroutine = StartCoroutine(TransitionCutaway(true));
+            else 
+                SetCutawayImmediate(true);
         }
 
         public void DeactivateCutaway()
         {
             if (!isCutawayActive) return;
             if (transitionCoroutine != null) StopCoroutine(transitionCoroutine);
-            if (smoothTransition) transitionCoroutine = StartCoroutine(TransitionCutaway(false));
-            else SetCutawayImmediate(false);
+            if (smoothTransition) 
+                transitionCoroutine = StartCoroutine(TransitionCutaway(false));
+            else 
+                SetCutawayImmediate(false);
         }
 
         public void ToggleCutaway()
         {
-            if (isCutawayActive) DeactivateCutaway();
-            else ActivateCutaway();
+            if (isCutawayActive) 
+                DeactivateCutaway();
+            else 
+                ActivateCutaway();
         }
 
         private IEnumerator TransitionCutaway(bool activate)
@@ -138,39 +143,25 @@ namespace IndustrialReactorSimulator
 
             UpdateClipPlane();
 
-            // Apply to cutaway material (slot 1) - this does the clipping
-            tankRenderer.GetPropertyBlock(propertyBlock, cutawayMaterialSlot);
+            tankRenderer.GetPropertyBlock(propertyBlock, materialIndex);
             
+            // Animate the clip plane - when cutaway is off, push plane far away
             Vector4 animatedPlane = clipPlaneVector;
-            // When cutaway is off, push clip plane far away; when on, use actual position
             animatedPlane.w = Mathf.Lerp(1000f, clipPlaneVector.w, cutawayAmount);
             
             propertyBlock.SetVector(clipPlaneProperty, animatedPlane);
             propertyBlock.SetVector(clipDirProperty, new Vector4(clipDirection.x, clipDirection.y, clipDirection.z, 0f));
             propertyBlock.SetFloat(enableClipProperty, cutawayAmount > 0.01f ? 1f : 0f);
             
-            tankRenderer.SetPropertyBlock(propertyBlock, cutawayMaterialSlot);
-
-            // Apply INVERTED clip plane to metal material (slot 0)
-            // This keeps the metal visible on the REMAINING (non-cut) half
-            tankRenderer.GetPropertyBlock(metalPropertyBlock, metalMaterialSlot);
-            
-            // Invert the clip plane for metal - show what cutaway hides
-            Vector4 invertedPlane = new Vector4(-animatedPlane.x, -animatedPlane.y, -animatedPlane.z, -animatedPlane.w);
-            
-            // For metal material, we want it to show on the side that ISN'T cut
-            // When cutaway is active, metal shows on the remaining half
-            metalPropertyBlock.SetVector(clipPlaneProperty, invertedPlane);
-            metalPropertyBlock.SetVector(clipDirProperty, new Vector4(-clipDirection.x, -clipDirection.y, -clipDirection.z, 0f));
-            metalPropertyBlock.SetFloat(enableClipProperty, cutawayAmount > 0.01f ? 1f : 0f);
-            
-            tankRenderer.SetPropertyBlock(metalPropertyBlock, metalMaterialSlot);
+            tankRenderer.SetPropertyBlock(propertyBlock, materialIndex);
         }
 
         private void ApplyMeshHiding()
         {
-            if (frontHalfMesh != null) frontHalfMesh.SetActive(cutawayAmount < 0.5f);
-            if (interiorMesh != null) interiorMesh.SetActive(cutawayAmount > 0.5f);
+            if (frontHalfMesh != null) 
+                frontHalfMesh.SetActive(cutawayAmount < 0.5f);
+            if (interiorMesh != null) 
+                interiorMesh.SetActive(cutawayAmount > 0.5f);
         }
 
         private void UpdateClipPlane()
@@ -184,7 +175,8 @@ namespace IndustrialReactorSimulator
             else
             {
                 Vector3 center = transform.position;
-                clipPlaneVector = new Vector4(clipDirection.x, clipDirection.y, clipDirection.z, -Vector3.Dot(clipDirection, center));
+                Vector3 worldClipDir = transform.TransformDirection(clipDirection).normalized;
+                clipPlaneVector = new Vector4(worldClipDir.x, worldClipDir.y, worldClipDir.z, -Vector3.Dot(worldClipDir, center));
             }
         }
 
@@ -209,12 +201,46 @@ namespace IndustrialReactorSimulator
         }
 
 #if UNITY_EDITOR
-        [ContextMenu("Test Cutaway Toggle")]
-        private void TestCutawayToggle() => ToggleCutaway();
-
-        [ContextMenu("Force Update Clip Plane")]
-        private void ForceUpdateClipPlane()
+        private void OnValidate()
         {
+            if (tankRenderer != null && propertyBlock != null)
+            {
+                UpdateClipPlane();
+                ApplyCutaway();
+            }
+        }
+
+        [ContextMenu("Test Cutaway Toggle")]
+        private void TestCutawayToggle()
+        {
+            if (Application.isPlaying)
+                ToggleCutaway();
+            else
+            {
+                isCutawayActive = !isCutawayActive;
+                cutawayAmount = isCutawayActive ? 1f : 0f;
+                if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
+                UpdateClipPlane();
+                ApplyCutaway();
+            }
+        }
+
+        [ContextMenu("Force Activate Cutaway")]
+        private void ForceActivate()
+        {
+            if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
+            isCutawayActive = true;
+            cutawayAmount = 1f;
+            UpdateClipPlane();
+            ApplyCutaway();
+        }
+
+        [ContextMenu("Force Deactivate Cutaway")]
+        private void ForceDeactivate()
+        {
+            if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
+            isCutawayActive = false;
+            cutawayAmount = 0f;
             UpdateClipPlane();
             ApplyCutaway();
         }
