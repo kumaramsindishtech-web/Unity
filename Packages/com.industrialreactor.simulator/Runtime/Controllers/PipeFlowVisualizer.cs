@@ -50,7 +50,6 @@ namespace IndustrialReactorSimulator
         [Header("Fill Direction Fix")]
         [Tooltip("Enable if water fills from wrong direction (UV mapping issue)")]
         [SerializeField] private bool invertFillDirection = false;
-        [SerializeField] private string invertFillProperty = "_InvertFill";
 
         [Header("Visual Settings")]
         [Tooltip("UV scroll speed multiplier for flow animation")]
