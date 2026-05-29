@@ -62,24 +62,25 @@ float IR_voronoi(float2 p, float causticsSpeed)
 }
 
 // ---- main water color ------------------------------------------------------
-// cylUV     : x = angle around the cylinder (0..1), y = coordinate along fill axis
-// fillCoord : 0 at bottom of fill axis, 1 at top (object-space normalized)
+// cylUV     : x = around the cross-section (0..1), y = coordinate along the length / fill axis
+// fillCoord : 0 at the start of the fill, 1 at the end
 // fillLevel : current fill amount (0..1)
 // alphaMul  : extra alpha multiplier (e.g. pipe flow intensity; 1 for tank)
+// flowDir   : +1 or -1 -> direction the water flows along cylUV.y
 half4 IR_ComputeWaterFlow(float2 cylUV, float fillCoord, float fillLevel,
-                          float3 normalWS, float3 viewWS, float alphaMul)
+                          float3 normalWS, float3 viewWS, float alphaMul, float flowDir)
 {
     float t = _Time.y + _TimeOffset;
 
-    // surface line (wavy around the circumference)
+    // surface line (wavy across the cross-section)
     float sw = sin(cylUV.x * _SurfaceWaveFreq + t * 3.5) * _SurfaceWaveAmp
              + sin(cylUV.x * _SurfaceWaveFreq * 1.7 + t * 2.1) * _SurfaceWaveAmp * 0.5;
     float surfaceY     = fillLevel + sw;
     float belowSurface = step(fillCoord, surfaceY); // 1 = below water line
 
-    // flow field
+    // flow field (scrolls along cylUV.y in the chosen direction)
     float2 uv  = cylUV;
-    float2 fUV = uv; fUV.y -= t * _FlowSpeed * 0.08;
+    float2 fUV = uv; fUV.y -= t * _FlowSpeed * 0.08 * flowDir;
     float2 warp = float2(IR_fbm(fUV * 2.0 + float2(0,   t * 0.12), 2),
                          IR_fbm(fUV * 2.0 + float2(3.7, t * 0.09), 2));
     float2 wUV  = fUV + (warp - 0.5) * _Turbulence * 0.4;
@@ -90,7 +91,7 @@ half4 IR_ComputeWaterFlow(float2 cylUV, float fillCoord, float fillLevel,
 
     // perturbed normal
     float eps = 0.005;
-    float2 nUV = wUV * _FlowTiling + float2(0, -t * _FlowSpeed * 0.1);
+    float2 nUV = wUV * _FlowTiling + float2(0, -t * _FlowSpeed * 0.1 * flowDir);
     float h0 = IR_fbm(nUV, 3);
     float hx = IR_fbm(nUV + float2(eps, 0), 3);
     float hy = IR_fbm(nUV + float2(0, eps), 3);
@@ -122,7 +123,7 @@ half4 IR_ComputeWaterFlow(float2 cylUV, float fillCoord, float fillLevel,
     col += fresnel * 0.2;
 
     // flow foam
-    float2 foamUV = uv; foamUV.y -= t * _FoamSpeed * 0.05;
+    float2 foamUV = uv; foamUV.y -= t * _FoamSpeed * 0.05 * flowDir;
     float2 fmW = float2(IR_fbm(foamUV * _FoamTiling + float2(1.3, t * 0.08), 2),
                         IR_fbm(foamUV * _FoamTiling + float2(4.1, t * 0.06), 2));
     float foamN = IR_fbm(foamUV * _FoamTiling + (fmW - 0.5) * 0.3, 3);

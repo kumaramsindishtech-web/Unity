@@ -45,14 +45,11 @@ namespace IndustrialReactorSimulator
         [SerializeField] private string flowSpeedProperty = "_FlowSpeed";
         [SerializeField] private string flowIntensityProperty = "_FlowIntensity";
         [SerializeField] private string invertFillProperty = "_InvertFill";
-        [SerializeField] private string fillMinProperty = "_FillMin";
-        [SerializeField] private string fillMaxProperty = "_FillMax";
-        [SerializeField] private string fillAxisProperty = "_FillAxis";
 
         [Header("Fill Direction")]
-        [Tooltip("Local axis along which the pipe fills (its long axis). Y is typical for cylinder meshes.")]
-        [SerializeField] private PipeFillAxis fillAxisLocal = PipeFillAxis.Y;
-        [Tooltip("Enable if water fills from the wrong end of the pipe.")]
+        [Tooltip("Enable if water fills/flows from the wrong end of the pipe. " +
+                 "The base direction is set on the material via 'Fill / Scroll Direction' (+V / -V); " +
+                 "this toggle (and reverse flow) flips it at runtime.")]
         [SerializeField] private bool invertFillDirection = false;
 
         [Header("Visual Settings")]
@@ -81,8 +78,6 @@ namespace IndustrialReactorSimulator
         private Material originalMaterial;
         private bool isGlassModeActive = false;
         private bool initialized = false;
-        private Vector3 boundsMin = new Vector3(-0.5f, -0.5f, -0.5f);
-        private Vector3 boundsMax = new Vector3(0.5f, 0.5f, 0.5f);
 
         // Events for sequential flow coordination
         public event Action OnPipeFilled;
@@ -145,33 +140,8 @@ namespace IndustrialReactorSimulator
             {
                 originalMaterial = pipeRenderer.sharedMaterials[materialIndex];
             }
-
-            CacheMeshBounds();
             
             initialized = true;
-        }
-
-        /// <summary>Cache the pipe mesh's object-space bounds for shader-based fill.</summary>
-        private void CacheMeshBounds()
-        {
-            boundsMin = new Vector3(-0.5f, -0.5f, -0.5f);
-            boundsMax = new Vector3(0.5f, 0.5f, 0.5f);
-
-            if (pipeRenderer == null) return;
-
-            var mf = pipeRenderer.GetComponent<MeshFilter>();
-            if (mf != null && mf.sharedMesh != null)
-            {
-                Bounds b = mf.sharedMesh.bounds;
-                boundsMin = b.min;
-                boundsMax = b.max;
-            }
-            else if (pipeRenderer is SkinnedMeshRenderer smr && smr.sharedMesh != null)
-            {
-                Bounds b = smr.sharedMesh.bounds;
-                boundsMin = b.min;
-                boundsMax = b.max;
-            }
         }
 
         private void Start()
@@ -494,16 +464,8 @@ namespace IndustrialReactorSimulator
             int matCount = pipeRenderer.sharedMaterials.Length;
             if (materialIndex < 0 || materialIndex >= matCount) return;
 
-            // Bounds along the chosen local fill axis (object space)
-            float fillMin, fillMax;
-            switch (fillAxisLocal)
-            {
-                case PipeFillAxis.X: fillMin = boundsMin.x; fillMax = boundsMax.x; break;
-                case PipeFillAxis.Z: fillMin = boundsMin.z; fillMax = boundsMax.z; break;
-                default:             fillMin = boundsMin.y; fillMax = boundsMax.y; break;
-            }
-
             // Reverse flow flips the fill direction in addition to the manual toggle.
+            // The base +V / -V direction is set on the material (_FlowDir).
             bool invert = invertFillDirection ^ (flowDirection == FlowDirection.Reverse);
 
             pipeRenderer.GetPropertyBlock(propertyBlock, materialIndex);
@@ -512,9 +474,6 @@ namespace IndustrialReactorSimulator
             propertyBlock.SetFloat(flowSpeedProperty, flowAnimationSpeed);
             propertyBlock.SetFloat(flowIntensityProperty, flowIntensity);
             propertyBlock.SetFloat(invertFillProperty, invert ? 1f : 0f);
-            propertyBlock.SetFloat(fillMinProperty, fillMin);
-            propertyBlock.SetFloat(fillMaxProperty, fillMax);
-            propertyBlock.SetFloat(fillAxisProperty, (float)fillAxisLocal); // 0=X,1=Y,2=Z
             
             pipeRenderer.SetPropertyBlock(propertyBlock, materialIndex);
         }
@@ -581,16 +540,5 @@ namespace IndustrialReactorSimulator
         Filling,
         Filled,
         Draining
-    }
-
-    /// <summary>
-    /// Local axis of the pipe mesh along which water travels.
-    /// Matches the shader's _FillAxis convention (0=X, 1=Y, 2=Z).
-    /// </summary>
-    public enum PipeFillAxis
-    {
-        X = 0,
-        Y = 1,
-        Z = 2
     }
 }

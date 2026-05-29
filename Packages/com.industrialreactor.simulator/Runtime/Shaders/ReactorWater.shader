@@ -136,7 +136,7 @@ Shader "Industrial Reactor/Water"
                 float2 cylUV    = IR_CylUV(IN.positionOS, fillCoord);
                 float3 viewWS   = GetWorldSpaceViewDir(IN.positionWS);
 
-                half4 col = IR_ComputeWaterFlow(cylUV, fillCoord, _WaterLevel, IN.normalWS, viewWS, 1.0);
+                half4 col = IR_ComputeWaterFlow(cylUV, fillCoord, _WaterLevel, IN.normalWS, viewWS, 1.0, 1.0);
 
                 // Swirl tint (driven by agitator) + emission glow
                 float ang   = _SwirlSpeed * _Time.y * 0.01;

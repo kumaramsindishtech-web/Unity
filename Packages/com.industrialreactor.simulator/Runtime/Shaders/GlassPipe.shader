@@ -1,18 +1,21 @@
 // ============================================================================
-// Industrial Reactor Simulator - Pipe Water Shader (URP)
+// Industrial Reactor Simulator - Pipe Water Shader (URP) - UV SCROLL FILL
 //
-// Realistic flowing water inside the pipe, sharing the same look as the tank
-// water via WaterFlowCore.hlsl.
+// Realistic flowing water inside the pipe, sharing the look of the tank water
+// via WaterFlowCore.hlsl.
 //
-// Fill is driven by the pipe mesh's OBJECT-SPACE bounds along its long axis.
-// The PipeFlowVisualizer passes:
-//     _FillProgress  : 0..1 fill amount (how far the water has travelled)
-//     _FillMin       : object-space minimum along the fill axis
-//     _FillMax       : object-space maximum along the fill axis
-//     _FillAxis      : 0 = X, 1 = Y (default), 2 = Z
-//     _InvertFill    : flip fill direction
-//     _FlowSpeed     : flow animation speed
-//     _FlowIntensity : overall opacity (fade in/out)
+// FILL METHOD: UV based. The fill and the flow run along the mesh's V (UV.y),
+// so they follow the pipe's length INCLUDING bends (as long as the pipe mesh
+// is unwrapped with V running 0..1 along the centreline).
+//
+// Direction:
+//   _FlowDir   : +1 = fill/flow toward +V, -1 = toward -V  (material dropdown)
+//   _InvertFill: runtime flip (set by PipeFlowVisualizer for reverse flow)
+//
+// Driven by PipeFlowVisualizer:
+//   _FillProgress  : 0..1 how far the water has travelled along the pipe
+//   _FlowSpeed     : scroll speed
+//   _FlowIntensity : overall opacity (fade in/out)
 // ============================================================================
 
 Shader "Industrial Reactor/Glass Pipe"
@@ -55,12 +58,11 @@ Shader "Industrial Reactor/Glass Pipe"
         _SurfaceWaveAmp   ("Surface Wave Amplitude", Range(0,0.05)) = 0.015
         _SurfaceWaveFreq  ("Surface Wave Frequency", Range(1,30))   = 12.0
 
-        [Header(Fill (driven by PipeFlowVisualizer))]
-        _FillProgress     ("Fill Progress (0-1)",      Range(0,1)) = 0.0
-        _FillMin          ("Fill Min (object space)",  Float)      = -0.5
-        _FillMax          ("Fill Max (object space)",  Float)      =  0.5
-        _FillAxis         ("Fill Axis (0=X,1=Y,2=Z)",  Float)      =  1
-        [Toggle] _InvertFill ("Invert Fill", Float) = 0
+        [Header(Fill (UV based))]
+        _FillProgress     ("Fill Progress (0-1)", Range(0,1)) = 0.0
+        [Enum(Plus V (UV.y +),1, Minus V (UV.y -),-1)] _FlowDir ("Fill / Scroll Direction", Float) = 1
+        [Toggle] _InvertFill ("Invert (runtime)", Float) = 0
+        _UVTiling         ("Length UV Tiling", Float) = 1.0
         _FlowIntensity    ("Flow Intensity (opacity)", Range(0,1)) = 1.0
 
         [HideInInspector] _TimeOffset ("Time Offset", Float) = 0
@@ -94,14 +96,15 @@ Shader "Industrial Reactor/Glass Pipe"
             {
                 float4 positionOS : POSITION;
                 float3 normalOS   : NORMAL;
+                float2 uv         : TEXCOORD0;
             };
 
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
-                float3 positionOS : TEXCOORD0;
-                float3 positionWS : TEXCOORD1;
-                float3 normalWS   : TEXCOORD2;
+                float3 positionWS : TEXCOORD0;
+                float3 normalWS   : TEXCOORD1;
+                float2 uv         : TEXCOORD2;
             };
 
             CBUFFER_START(UnityPerMaterial)
@@ -114,7 +117,7 @@ Shader "Industrial Reactor/Glass Pipe"
                 half  _CausticsScale, _CausticsSpeed, _CausticsStrength;
                 half  _DepthStrength, _EdgeFoam, _CapFade;
                 half  _SurfaceFoamWidth, _SurfaceWaveAmp, _SurfaceWaveFreq;
-                half  _FillProgress, _FillMin, _FillMax, _FillAxis, _InvertFill;
+                half  _FillProgress, _FlowDir, _InvertFill, _UVTiling;
                 half  _FlowIntensity, _TimeOffset;
             CBUFFER_END
 
@@ -123,20 +126,30 @@ Shader "Industrial Reactor/Glass Pipe"
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
-                OUT.positionOS = IN.positionOS.xyz;
                 OUT.positionCS = TransformObjectToHClip(IN.positionOS.xyz);
                 OUT.positionWS = TransformObjectToWorld(IN.positionOS.xyz);
                 OUT.normalWS   = TransformObjectToWorldNormal(IN.normalOS);
+                OUT.uv         = IN.uv;
                 return OUT;
             }
 
             half4 frag(Varyings IN) : SV_Target
             {
-                float fillCoord = IR_GetFillCoord(IN.positionOS, _FillAxis, _FillMin, _FillMax, _InvertFill);
-                float2 cylUV    = IR_CylUV(IN.positionOS, fillCoord);
-                float3 viewWS   = GetWorldSpaceViewDir(IN.positionWS);
+                // Effective direction: material dropdown combined with runtime invert.
+                float dir = _FlowDir * ((_InvertFill > 0.5) ? -1.0 : 1.0);
 
-                half4 col = IR_ComputeWaterFlow(cylUV, fillCoord, _FillProgress, IN.normalWS, viewWS, _FlowIntensity);
+                // V coordinate runs along the pipe length (follows bends).
+                float v = frac(IN.uv.y * _UVTiling);
+
+                // fillCoord = 0 at the entry end, 1 at the far end (per direction).
+                float fillCoord = (dir > 0.0) ? v : (1.0 - v);
+
+                // cylUV.x = around the pipe, cylUV.y = along the length.
+                float2 cylUV  = float2(IN.uv.x, v);
+                float3 viewWS = GetWorldSpaceViewDir(IN.positionWS);
+
+                half4 col = IR_ComputeWaterFlow(cylUV, fillCoord, _FillProgress,
+                                                IN.normalWS, viewWS, _FlowIntensity, dir);
 
                 clip(col.a - 0.001);
                 return col;
