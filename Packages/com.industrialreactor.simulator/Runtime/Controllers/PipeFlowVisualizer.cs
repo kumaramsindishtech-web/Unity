@@ -11,7 +11,7 @@ namespace IndustrialReactorSimulator
 {
     /// <summary>
     /// Visualizes fluid flow through pipes with fill progress and UV-based flow animation.
-    /// Supports sequential flow: water fills pipe first, then triggers tank fill callback.
+    /// Supports glass pipe mode: shows transparent glass pipe with water inside when flowing.
     /// </summary>
     [AddComponentMenu("Industrial Reactor/Pipe Flow Visualizer")]
     public class PipeFlowVisualizer : MonoBehaviour
@@ -20,6 +20,14 @@ namespace IndustrialReactorSimulator
         [SerializeField] private ValveType associatedValveType = ValveType.Inlet;
         [SerializeField] private Renderer pipeRenderer;
         [SerializeField] private int materialIndex = 0;
+
+        [Header("Material Mode")]
+        [Tooltip("Metal material shown in editor/when not flowing")]
+        [SerializeField] private Material metalMaterial;
+        [Tooltip("Glass pipe material with water flow effect")]
+        [SerializeField] private Material glassPipeMaterial;
+        [Tooltip("Use glass pipe effect when flowing")]
+        [SerializeField] private bool useGlassPipeEffect = true;
 
         [Header("Pipe Dimensions")]
         [Tooltip("Length of the pipe in meters (for flow time calculation)")]
@@ -32,11 +40,11 @@ namespace IndustrialReactorSimulator
         [Range(0.1f, 100f)]
         [SerializeField] private float flowRateLitersPerSecond = 10f;
         
-        [Header("Shader Properties")]
+        [Header("Glass Pipe Shader Properties")]
         [SerializeField] private string fillProgressProperty = "_FillProgress";
         [SerializeField] private string flowSpeedProperty = "_FlowSpeed";
-        [SerializeField] private string flowDirectionProperty = "_FlowDirection";
         [SerializeField] private string flowIntensityProperty = "_FlowIntensity";
+        [SerializeField] private string fillDirectionProperty = "_FillDirection";
 
         [Header("Visual Settings")]
         [Tooltip("UV scroll speed multiplier for flow animation")]
@@ -63,6 +71,8 @@ namespace IndustrialReactorSimulator
         private MaterialPropertyBlock propertyBlock;
         private Coroutine fillCoroutine;
         private Coroutine fadeCoroutine;
+        private Material originalMaterial;
+        private bool isGlassModeActive = false;
 
         // Events for sequential flow coordination
         public event Action OnPipeFilled;
@@ -78,6 +88,7 @@ namespace IndustrialReactorSimulator
         public PipeFlowState FlowState => flowState;
         public bool IsFilled => fillProgress >= 0.99f;
         public bool IsEmpty => fillProgress <= 0.01f;
+        public bool UseGlassPipeEffect => useGlassPipeEffect;
 
         /// <summary>
         /// Flow rate in Liters per second - editable in inspector
@@ -113,11 +124,29 @@ namespace IndustrialReactorSimulator
         private void Awake()
         {
             propertyBlock = new MaterialPropertyBlock();
+            
+            // Store original material
+            if (pipeRenderer != null && pipeRenderer.sharedMaterials.Length > materialIndex)
+            {
+                originalMaterial = pipeRenderer.sharedMaterials[materialIndex];
+            }
         }
 
         private void Start()
         {
+            // Start with metal material in editor mode
+            if (!Application.isPlaying) return;
+            SetMetalMode();
             UpdateMaterial();
+        }
+
+        private void OnDestroy()
+        {
+            // Restore original material
+            if (pipeRenderer != null && originalMaterial != null)
+            {
+                SetPipeMaterial(originalMaterial);
+            }
         }
 
         private void Update()
@@ -142,6 +171,12 @@ namespace IndustrialReactorSimulator
             flowDirection = direction;
             isFlowing = true;
             flowDirectionMultiplier = direction == FlowDirection.Reverse ? -1f : 1f;
+
+            // Switch to glass pipe material when flowing
+            if (useGlassPipeEffect)
+            {
+                SetGlassMode();
+            }
 
             // Stop any existing coroutines
             if (fillCoroutine != null) StopCoroutine(fillCoroutine);
@@ -208,6 +243,9 @@ namespace IndustrialReactorSimulator
             fillProgress = 0f;
             flowState = PipeFlowState.Empty;
 
+            // Switch back to metal material
+            SetMetalMode();
+
             if (flowParticles != null)
             {
                 flowParticles.Stop();
@@ -215,6 +253,38 @@ namespace IndustrialReactorSimulator
             }
 
             UpdateMaterial();
+        }
+
+        /// <summary>
+        /// Switch to metal/opaque pipe material
+        /// </summary>
+        public void SetMetalMode()
+        {
+            if (!useGlassPipeEffect || metalMaterial == null) return;
+            SetPipeMaterial(metalMaterial);
+            isGlassModeActive = false;
+        }
+
+        /// <summary>
+        /// Switch to glass pipe material with water
+        /// </summary>
+        public void SetGlassMode()
+        {
+            if (!useGlassPipeEffect || glassPipeMaterial == null) return;
+            SetPipeMaterial(glassPipeMaterial);
+            isGlassModeActive = true;
+        }
+
+        private void SetPipeMaterial(Material mat)
+        {
+            if (pipeRenderer == null || mat == null) return;
+            
+            Material[] mats = pipeRenderer.sharedMaterials;
+            if (materialIndex < mats.Length)
+            {
+                mats[materialIndex] = mat;
+                pipeRenderer.sharedMaterials = mats;
+            }
         }
 
         /// <summary>
@@ -312,6 +382,12 @@ namespace IndustrialReactorSimulator
             isFlowing = false;
             flowDirection = FlowDirection.None;
 
+            // Switch back to metal material when empty
+            if (useGlassPipeEffect)
+            {
+                SetMetalMode();
+            }
+
             // Fade out flow intensity
             fadeCoroutine = StartCoroutine(FadeFlowIntensity(0f));
 
@@ -365,7 +441,7 @@ namespace IndustrialReactorSimulator
             
             propertyBlock.SetFloat(fillProgressProperty, fillProgress);
             propertyBlock.SetFloat(flowSpeedProperty, flowAnimationSpeed);
-            propertyBlock.SetFloat(flowDirectionProperty, flowDirectionMultiplier);
+            propertyBlock.SetFloat(fillDirectionProperty, flowDirectionMultiplier);
             propertyBlock.SetFloat(flowIntensityProperty, flowIntensity);
             
             pipeRenderer.SetPropertyBlock(propertyBlock, materialIndex);
