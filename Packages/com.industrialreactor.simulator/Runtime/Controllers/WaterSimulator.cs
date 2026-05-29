@@ -10,21 +10,23 @@ namespace IndustrialReactorSimulator
 {
     /// <summary>
     /// Simulates water behavior in the reactor tank.
-    /// Supports Z-axis fill mode for horizontal tanks.
+    /// Water fills from BOTTOM to TOP by default.
     /// </summary>
     [AddComponentMenu("Industrial Reactor/Water Simulator")]
     public class WaterSimulator : MonoBehaviour
     {
         [Header("Water Mesh Configuration")]
         [SerializeField] private Transform waterMesh;
-        [SerializeField] private WaterScaleMode scaleMode = WaterScaleMode.ScaleY;
+        [SerializeField] private WaterScaleMode scaleMode = WaterScaleMode.MoveAndScale;
         [Tooltip("Fill axis: Y for vertical tanks, Z for horizontal tanks")]
         [SerializeField] private WaterFillAxis fillAxis = WaterFillAxis.Y;
-        [Tooltip("Fill direction: Normal = bottom to top, Inverted = top to bottom")]
-        [SerializeField] private WaterFillDirection fillDirection = WaterFillDirection.Normal;
         [SerializeField] private float minScale = 0.01f;
         [SerializeField] private float maxScale = 1f;
-        [SerializeField] private Vector3 emptyPositionOffset = Vector3.zero;
+        
+        [Header("Position Offsets (for MoveAndScale mode)")]
+        [Tooltip("Position offset when tank is empty (usually bottom)")]
+        [SerializeField] private Vector3 emptyPositionOffset = new Vector3(0, -0.5f, 0);
+        [Tooltip("Position offset when tank is full (usually center or top)")]
         [SerializeField] private Vector3 fullPositionOffset = Vector3.zero;
 
         [Header("Tank Configuration")]
@@ -48,6 +50,7 @@ namespace IndustrialReactorSimulator
         private MaterialPropertyBlock propertyBlock;
         private Vector3 initialScale;
         private Vector3 initialPosition;
+        private bool initialized = false;
 
         // Events
         public event Action<float> OnWaterLevelChanged;
@@ -61,7 +64,6 @@ namespace IndustrialReactorSimulator
         public bool IsEmpty => currentWaterLevel <= 0.01f;
         public bool IsFull => currentWaterLevel >= 0.99f;
         public WaterFillAxis FillAxis => fillAxis;
-        public WaterFillDirection FillDirection => fillDirection;
 
         /// <summary>
         /// Enable or disable tank filling (used for sequential flow)
@@ -74,17 +76,34 @@ namespace IndustrialReactorSimulator
 
         private void Awake()
         {
+            Initialize();
+        }
+        
+        private void Initialize()
+        {
+            if (initialized) return;
+            
             propertyBlock = new MaterialPropertyBlock();
             if (waterMesh != null)
             {
                 initialScale = waterMesh.localScale;
                 initialPosition = waterMesh.localPosition;
             }
+            initialized = true;
         }
 
         private void Start()
         {
+            Initialize();
+            // Start with water at level 0 (empty)
+            currentWaterLevel = 0f;
+            currentVolume = 0f;
             UpdateWaterVisuals();
+        }
+        
+        private void OnEnable()
+        {
+            Initialize();
         }
 
         /// <summary>
@@ -152,6 +171,7 @@ namespace IndustrialReactorSimulator
             
             if (useMaterialPropertyBlock)
             {
+                if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
                 waterRenderer.GetPropertyBlock(propertyBlock);
                 propertyBlock.SetFloat(emissionIntensityProperty, intensity);
                 waterRenderer.SetPropertyBlock(propertyBlock);
@@ -172,15 +192,6 @@ namespace IndustrialReactorSimulator
         }
 
         /// <summary>
-        /// Set fill direction at runtime
-        /// </summary>
-        public void SetFillDirection(WaterFillDirection direction)
-        {
-            fillDirection = direction;
-            UpdateWaterVisuals();
-        }
-
-        /// <summary>
         /// Reset water to empty state
         /// </summary>
         public void ResetWater()
@@ -190,17 +201,6 @@ namespace IndustrialReactorSimulator
             currentSwirlSpeed = 0f;
             canFill = false;
             
-            if (waterMesh != null)
-            {
-                // Reset based on fill axis
-                if (fillAxis == WaterFillAxis.Z)
-                    waterMesh.localScale = new Vector3(initialScale.x, initialScale.y, minScale);
-                else
-                    waterMesh.localScale = new Vector3(initialScale.x, minScale, initialScale.z);
-                    
-                waterMesh.localPosition = initialPosition + emptyPositionOffset;
-            }
-            
             UpdateWaterVisuals();
             ReactorEvents.RaiseWaterLevelChanged(currentWaterLevel);
             OnWaterLevelChanged?.Invoke(currentWaterLevel);
@@ -208,62 +208,53 @@ namespace IndustrialReactorSimulator
 
         private void UpdateWaterVisuals()
         {
-            UpdateMeshScale();
+            UpdateMeshTransform();
             UpdateShaderProperties();
         }
 
-        private void UpdateMeshScale()
+        private void UpdateMeshTransform()
         {
             if (waterMesh == null) return;
+
+            // Calculate scale based on water level
+            float scaleFactor = Mathf.Lerp(minScale, maxScale, currentWaterLevel);
 
             switch (scaleMode)
             {
                 case WaterScaleMode.ScaleY:
-                    // Scale on Y axis (vertical fill)
+                    // Scale on fill axis only
                     if (fillAxis == WaterFillAxis.Y)
                     {
-                        waterMesh.localScale = new Vector3(
-                            initialScale.x,
-                            Mathf.Lerp(minScale, maxScale, currentWaterLevel),
-                            initialScale.z
-                        );
+                        waterMesh.localScale = new Vector3(initialScale.x, scaleFactor, initialScale.z);
                     }
-                    // Scale on Z axis (horizontal fill)
-                    else
+                    else // Z axis
                     {
-                        waterMesh.localScale = new Vector3(
-                            initialScale.x,
-                            initialScale.y,
-                            Mathf.Lerp(minScale, maxScale, currentWaterLevel)
-                        );
+                        waterMesh.localScale = new Vector3(initialScale.x, initialScale.y, scaleFactor);
                     }
                     break;
 
                 case WaterScaleMode.ScaleXYZ:
-                    waterMesh.localScale = Vector3.one * Mathf.Lerp(minScale, maxScale, currentWaterLevel);
+                    waterMesh.localScale = Vector3.one * scaleFactor;
                     break;
 
                 case WaterScaleMode.MoveAndScale:
-                    float scale = Mathf.Lerp(minScale, maxScale, currentWaterLevel);
-                    
+                    // Scale the water mesh
                     if (fillAxis == WaterFillAxis.Y)
                     {
-                        waterMesh.localScale = new Vector3(initialScale.x, scale, initialScale.z);
+                        waterMesh.localScale = new Vector3(initialScale.x, scaleFactor, initialScale.z);
                     }
                     else
                     {
-                        waterMesh.localScale = new Vector3(initialScale.x, initialScale.y, scale);
+                        waterMesh.localScale = new Vector3(initialScale.x, initialScale.y, scaleFactor);
                     }
                     
-                    // Adjust position based on fill direction
-                    Vector3 startPos = fillDirection == WaterFillDirection.Normal 
-                        ? initialPosition + emptyPositionOffset 
-                        : initialPosition + fullPositionOffset;
-                    Vector3 endPos = fillDirection == WaterFillDirection.Normal 
-                        ? initialPosition + fullPositionOffset 
-                        : initialPosition + emptyPositionOffset;
-                    
-                    waterMesh.localPosition = Vector3.Lerp(startPos, endPos, currentWaterLevel);
+                    // Move from empty position (bottom) to full position (center/top)
+                    // As water level increases, position moves from emptyOffset toward fullOffset
+                    waterMesh.localPosition = Vector3.Lerp(
+                        initialPosition + emptyPositionOffset,
+                        initialPosition + fullPositionOffset,
+                        currentWaterLevel
+                    );
                     break;
 
                 case WaterScaleMode.ShaderOnly:
@@ -275,6 +266,7 @@ namespace IndustrialReactorSimulator
         private void UpdateShaderProperties()
         {
             if (waterRenderer == null) return;
+            if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
 
             if (useMaterialPropertyBlock)
             {
@@ -295,18 +287,21 @@ namespace IndustrialReactorSimulator
         [ContextMenu("Test Fill to 50%")]
         private void TestFill50()
         {
+            Initialize();
             SetWaterLevel(0.5f);
         }
 
         [ContextMenu("Test Fill to 100%")]
         private void TestFill100()
         {
+            Initialize();
             SetWaterLevel(1f);
         }
 
         [ContextMenu("Test Empty")]
         private void TestEmpty()
         {
+            Initialize();
             SetWaterLevel(0f);
         }
 
@@ -315,6 +310,26 @@ namespace IndustrialReactorSimulator
         {
             fillAxis = fillAxis == WaterFillAxis.Y ? WaterFillAxis.Z : WaterFillAxis.Y;
             UpdateWaterVisuals();
+        }
+        
+        [ContextMenu("Capture Current as Empty Position")]
+        private void CaptureEmptyPosition()
+        {
+            if (waterMesh != null)
+            {
+                emptyPositionOffset = waterMesh.localPosition - initialPosition;
+                Debug.Log($"[WaterSimulator] Empty position offset set to: {emptyPositionOffset}");
+            }
+        }
+        
+        [ContextMenu("Capture Current as Full Position")]
+        private void CaptureFullPosition()
+        {
+            if (waterMesh != null)
+            {
+                fullPositionOffset = waterMesh.localPosition - initialPosition;
+                Debug.Log($"[WaterSimulator] Full position offset set to: {fullPositionOffset}");
+            }
         }
 #endif
     }
@@ -326,14 +341,5 @@ namespace IndustrialReactorSimulator
     {
         Y,  // Vertical fill (default)
         Z   // Horizontal fill (for horizontal tanks)
-    }
-
-    /// <summary>
-    /// Water fill direction
-    /// </summary>
-    public enum WaterFillDirection
-    {
-        Normal,   // Bottom to top (Y) or back to front (Z)
-        Inverted  // Top to bottom (Y) or front to back (Z)
     }
 }

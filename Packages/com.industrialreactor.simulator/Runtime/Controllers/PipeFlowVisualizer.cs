@@ -40,14 +40,14 @@ namespace IndustrialReactorSimulator
         [Range(0.1f, 100f)]
         [SerializeField] private float flowRateLitersPerSecond = 10f;
         
-        [Header("Glass Pipe Shader Properties")]
+        [Header("Shader Properties")]
         [SerializeField] private string fillProgressProperty = "_FillProgress";
         [SerializeField] private string flowSpeedProperty = "_FlowSpeed";
         [SerializeField] private string flowIntensityProperty = "_FlowIntensity";
         [SerializeField] private string fillDirectionProperty = "_FillDirection";
         [SerializeField] private string invertFillProperty = "_InvertFill";
         
-        [Header("Fill Direction Fix")]
+        [Header("Fill Direction")]
         [Tooltip("Enable if water fills from wrong direction (UV mapping issue)")]
         [SerializeField] private bool invertFillDirection = false;
 
@@ -55,7 +55,7 @@ namespace IndustrialReactorSimulator
         [Tooltip("UV scroll speed multiplier for flow animation")]
         [Range(0.1f, 10f)]
         [SerializeField] private float flowAnimationSpeed = 2f;
-        [Tooltip("Flow direction: 1 = forward (top to bottom in UV), -1 = reverse")]
+        [Tooltip("Flow direction: 1 = forward, -1 = reverse")]
         [SerializeField] private float flowDirectionMultiplier = 1f;
 
         [Header("Optional Particle Flow")]
@@ -77,9 +77,8 @@ namespace IndustrialReactorSimulator
         private Coroutine fillCoroutine;
         private Coroutine fadeCoroutine;
         private Material originalMaterial;
-#pragma warning disable CS0414 // Field is assigned but its value is never used
         private bool isGlassModeActive = false;
-#pragma warning restore CS0414
+        private bool initialized = false;
 
         // Events for sequential flow coordination
         public event Action OnPipeFilled;
@@ -98,7 +97,7 @@ namespace IndustrialReactorSimulator
         public bool UseGlassPipeEffect => useGlassPipeEffect;
 
         /// <summary>
-        /// Flow rate in Liters per second - editable in inspector
+        /// Flow rate in Liters per second
         /// </summary>
         public float FlowRateLitersPerSecond
         {
@@ -120,16 +119,20 @@ namespace IndustrialReactorSimulator
         /// </summary>
         public float CalculateFillTime()
         {
-            // Volume = Length * CrossSection (in cubic meters)
             float volumeCubicMeters = pipeLength * pipeCrossSectionArea;
-            // Convert to liters (1 cubic meter = 1000 liters)
             float volumeLiters = volumeCubicMeters * 1000f;
-            // Time = Volume / FlowRate
             return volumeLiters / flowRateLitersPerSecond;
         }
 
         private void Awake()
         {
+            Initialize();
+        }
+        
+        private void Initialize()
+        {
+            if (initialized) return;
+            
             propertyBlock = new MaterialPropertyBlock();
             
             // Store original material
@@ -137,29 +140,32 @@ namespace IndustrialReactorSimulator
             {
                 originalMaterial = pipeRenderer.sharedMaterials[materialIndex];
             }
+            
+            initialized = true;
         }
 
         private void Start()
         {
-            // Start with metal material
+            Initialize();
+            
             if (!Application.isPlaying) return;
             
-            // Ensure we start in metal mode with empty pipe
+            // Start in metal mode with empty pipe
             SetMetalMode();
             fillProgress = 0f;
             flowIntensity = 0f;
+            isGlassModeActive = false;
             UpdateMaterial();
         }
 
         private void OnEnable()
         {
-            // Ensure proper state in editor
-            if (!Application.isPlaying && pipeRenderer != null)
+            Initialize();
+            
+            // In editor, ensure metal material is shown
+            if (!Application.isPlaying && pipeRenderer != null && metalMaterial != null)
             {
-                if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
-                // Reset to metal appearance in editor
-                if (metalMaterial != null)
-                    SetPipeMaterial(metalMaterial);
+                SetPipeMaterial(metalMaterial);
             }
         }
 
@@ -179,13 +185,12 @@ namespace IndustrialReactorSimulator
             // Update continuous flow animation when flowing and filled
             if (isFlowing && flowIntensity > 0f && fillProgress > 0f)
             {
-                UpdateFlowAnimation();
+                UpdateMaterial();
             }
         }
 
         /// <summary>
         /// Start filling the pipe with water flow animation.
-        /// Water visually fills from entry point to exit point based on flow direction.
         /// </summary>
         public void StartFlow(FlowDirection direction)
         {
@@ -303,7 +308,7 @@ namespace IndustrialReactorSimulator
             if (pipeRenderer == null || mat == null) return;
             
             Material[] mats = pipeRenderer.sharedMaterials;
-            if (materialIndex < mats.Length)
+            if (materialIndex >= 0 && materialIndex < mats.Length)
             {
                 mats[materialIndex] = mat;
                 pipeRenderer.sharedMaterials = mats;
@@ -316,6 +321,8 @@ namespace IndustrialReactorSimulator
         public void FillInstant()
         {
             if (fillCoroutine != null) StopCoroutine(fillCoroutine);
+            
+            if (useGlassPipeEffect) SetGlassMode();
             
             fillProgress = 1f;
             flowIntensity = 1f;
@@ -340,6 +347,7 @@ namespace IndustrialReactorSimulator
             isFlowing = false;
             flowDirection = FlowDirection.None;
             
+            SetMetalMode();
             UpdateMaterial();
             OnFillProgressChanged?.Invoke(fillProgress);
             OnPipeEmptied?.Invoke();
@@ -360,7 +368,7 @@ namespace IndustrialReactorSimulator
                 elapsed += Time.deltaTime;
                 float t = Mathf.Clamp01(elapsed / fillTime);
                 
-                // Smooth fill with slight ease-out
+                // Smooth fill with ease
                 fillProgress = Mathf.Lerp(startProgress, 1f, t * t * (3f - 2f * t));
                 
                 UpdateMaterial();
@@ -374,7 +382,7 @@ namespace IndustrialReactorSimulator
             UpdateMaterial();
             OnFillProgressChanged?.Invoke(fillProgress);
             
-            // Notify that pipe is filled - tank can start filling
+            // Notify that pipe is filled
             OnPipeFilled?.Invoke();
             
             fillCoroutine = null;
@@ -449,16 +457,13 @@ namespace IndustrialReactorSimulator
             fadeCoroutine = null;
         }
 
-        private void UpdateFlowAnimation()
-        {
-            // Continuous flow animation is handled by shader using _Time
-            // We just ensure the material properties are up to date
-            UpdateMaterial();
-        }
-
         private void UpdateMaterial()
         {
-            if (pipeRenderer == null) return;
+            if (pipeRenderer == null || propertyBlock == null) return;
+            
+            // Validate material index
+            int matCount = pipeRenderer.sharedMaterials.Length;
+            if (materialIndex < 0 || materialIndex >= matCount) return;
 
             pipeRenderer.GetPropertyBlock(propertyBlock, materialIndex);
             
@@ -496,6 +501,8 @@ namespace IndustrialReactorSimulator
         {
             if (Application.isPlaying)
                 StartFlow(FlowDirection.Forward);
+            else
+                Debug.Log("[PipeFlow] Test only works in Play Mode");
         }
 
         [ContextMenu("Test Drain Pipe")]
@@ -503,12 +510,21 @@ namespace IndustrialReactorSimulator
         {
             if (Application.isPlaying)
                 StopFlow();
+            else
+                Debug.Log("[PipeFlow] Test only works in Play Mode");
         }
 
         [ContextMenu("Log Fill Time")]
         private void LogFillTime()
         {
             Debug.Log($"[PipeFlow] Fill time at {flowRateLitersPerSecond} L/s: {CalculateFillTime():F2} seconds");
+        }
+        
+        [ContextMenu("Toggle Invert Fill Direction")]
+        private void ToggleInvertFill()
+        {
+            invertFillDirection = !invertFillDirection;
+            Debug.Log($"[PipeFlow] Invert fill direction: {invertFillDirection}");
         }
 #endif
     }
