@@ -20,8 +20,10 @@ namespace IndustrialReactorSimulator
 
         [Header("Renderer Settings")]
         [SerializeField] private Renderer tankRenderer;
-        [Tooltip("Material index for the cutaway material (usually 0 or 1)")]
+        [Tooltip("Material index for the cutaway material (usually 0). Set to -1 to apply to all materials.")]
         [SerializeField] private int materialIndex = 0;
+        
+        private int validMaterialIndex = 0;
 
         [Header("Shader Clipping Settings")]
         [SerializeField] private Transform cutawayPlane;
@@ -54,11 +56,52 @@ namespace IndustrialReactorSimulator
         private void Awake()
         {
             propertyBlock = new MaterialPropertyBlock();
+            ValidateMaterialIndex();
             UpdateClipPlane();
+        }
+        
+        /// <summary>
+        /// Validates and clamps the material index to a valid range
+        /// </summary>
+        private void ValidateMaterialIndex()
+        {
+            if (tankRenderer == null)
+            {
+                validMaterialIndex = 0;
+                return;
+            }
+            
+            int materialCount = tankRenderer.sharedMaterials.Length;
+            
+            if (materialCount == 0)
+            {
+                Debug.LogWarning($"[TankCutaway] {gameObject.name}: Renderer has no materials assigned.");
+                validMaterialIndex = 0;
+                return;
+            }
+            
+            // If materialIndex is -1, we'll apply to all materials (handled in ApplyShaderClipping)
+            // Otherwise, clamp to valid range
+            if (materialIndex >= 0)
+            {
+                validMaterialIndex = Mathf.Clamp(materialIndex, 0, materialCount - 1);
+                
+                if (materialIndex != validMaterialIndex)
+                {
+                    Debug.LogWarning($"[TankCutaway] {gameObject.name}: Material index {materialIndex} is out of range. Using index {validMaterialIndex} instead. Renderer has {materialCount} material(s).");
+                }
+            }
+            else
+            {
+                validMaterialIndex = -1; // Apply to all
+            }
         }
 
         private void Start()
         {
+            // Validate material index
+            ValidateMaterialIndex();
+            
             // Start with cutaway disabled in play mode
             if (Application.isPlaying)
             {
@@ -68,12 +111,14 @@ namespace IndustrialReactorSimulator
 
         private void OnEnable()
         {
-            // Ensure cutaway is disabled when component is enabled in editor
-            if (!Application.isPlaying)
-            {
-                if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
-                SetCutawayImmediate(false);
-            }
+            // Ensure proper initialization
+            if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
+            
+            // Validate material index
+            ValidateMaterialIndex();
+            
+            // Ensure cutaway is disabled when component is enabled
+            SetCutawayImmediate(false);
         }
 
         public void ActivateCutaway()
@@ -154,19 +199,53 @@ namespace IndustrialReactorSimulator
         {
             if (tankRenderer == null) return;
 
+            // Validate material index if not already done
+            if (propertyBlock == null)
+            {
+                propertyBlock = new MaterialPropertyBlock();
+                ValidateMaterialIndex();
+            }
+            
+            int materialCount = tankRenderer.sharedMaterials.Length;
+            if (materialCount == 0) return;
+
             UpdateClipPlane();
 
-            tankRenderer.GetPropertyBlock(propertyBlock, materialIndex);
-            
             // Animate the clip plane - when cutaway is off, push plane far away
             Vector4 animatedPlane = clipPlaneVector;
             animatedPlane.w = Mathf.Lerp(1000f, clipPlaneVector.w, cutawayAmount);
             
-            propertyBlock.SetVector(clipPlaneProperty, animatedPlane);
-            propertyBlock.SetVector(clipDirProperty, new Vector4(clipDirection.x, clipDirection.y, clipDirection.z, 0f));
-            propertyBlock.SetFloat(enableClipProperty, cutawayAmount > 0.01f ? 1f : 0f);
+            Vector4 clipDirVector = new Vector4(clipDirection.x, clipDirection.y, clipDirection.z, 0f);
+            float enableClip = cutawayAmount > 0.01f ? 1f : 0f;
+
+            // Apply to all materials if index is -1, otherwise apply to specific index
+            if (validMaterialIndex < 0)
+            {
+                // Apply to all materials
+                for (int i = 0; i < materialCount; i++)
+                {
+                    ApplyPropertyBlockToMaterial(i, animatedPlane, clipDirVector, enableClip);
+                }
+            }
+            else
+            {
+                // Apply to single material
+                ApplyPropertyBlockToMaterial(validMaterialIndex, animatedPlane, clipDirVector, enableClip);
+            }
+        }
+        
+        private void ApplyPropertyBlockToMaterial(int index, Vector4 clipPlane, Vector4 clipDir, float enableClip)
+        {
+            if (tankRenderer == null || index < 0 || index >= tankRenderer.sharedMaterials.Length) return;
             
-            tankRenderer.SetPropertyBlock(propertyBlock, materialIndex);
+            tankRenderer.GetPropertyBlock(propertyBlock, index);
+            
+            propertyBlock.SetVector(clipPlaneProperty, clipPlane);
+            propertyBlock.SetVector(clipDirProperty, clipDir);
+            propertyBlock.SetFloat(enableClipProperty, enableClip);
+            
+            tankRenderer.SetPropertyBlock(propertyBlock, index);
+        }
         }
 
         private void ApplyMeshHiding()
@@ -216,8 +295,10 @@ namespace IndustrialReactorSimulator
 #if UNITY_EDITOR
         private void OnValidate()
         {
-            if (tankRenderer != null && propertyBlock != null)
+            if (tankRenderer != null)
             {
+                if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
+                ValidateMaterialIndex();
                 UpdateClipPlane();
                 ApplyCutaway();
             }
@@ -233,6 +314,7 @@ namespace IndustrialReactorSimulator
                 isCutawayActive = !isCutawayActive;
                 cutawayAmount = isCutawayActive ? 1f : 0f;
                 if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
+                ValidateMaterialIndex();
                 UpdateClipPlane();
                 ApplyCutaway();
             }
@@ -242,6 +324,7 @@ namespace IndustrialReactorSimulator
         private void ForceActivate()
         {
             if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
+            ValidateMaterialIndex();
             isCutawayActive = true;
             cutawayAmount = 1f;
             UpdateClipPlane();
@@ -252,10 +335,28 @@ namespace IndustrialReactorSimulator
         private void ForceDeactivate()
         {
             if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
+            ValidateMaterialIndex();
             isCutawayActive = false;
             cutawayAmount = 0f;
             UpdateClipPlane();
             ApplyCutaway();
+        }
+        
+        [ContextMenu("Log Material Info")]
+        private void LogMaterialInfo()
+        {
+            if (tankRenderer == null)
+            {
+                Debug.Log("[TankCutaway] No renderer assigned.");
+                return;
+            }
+            
+            var materials = tankRenderer.sharedMaterials;
+            Debug.Log($"[TankCutaway] {gameObject.name}: Renderer has {materials.Length} material(s). Current index: {materialIndex}, Valid index: {validMaterialIndex}");
+            for (int i = 0; i < materials.Length; i++)
+            {
+                Debug.Log($"  [{i}] {(materials[i] != null ? materials[i].name : "NULL")}");
+            }
         }
 #endif
     }
