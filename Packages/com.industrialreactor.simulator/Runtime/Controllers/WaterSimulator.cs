@@ -48,15 +48,6 @@ namespace IndustrialReactorSimulator
         [SerializeField] private float minScale = 0.001f;
         [SerializeField] private float maxScale = 1f;
 
-        [Header("Surface Waves (optional script override)")]
-        [Tooltip("If enabled, the script controls the wave settings below and overrides the values set on the material. Leave OFF to control waves directly from the material.")]
-        [SerializeField] private bool overrideWaveSettings = false;
-        [Tooltip("Axis the surface ripples travel along. Z is the typical choice.")]
-        [SerializeField] private WaveAxis waveAxis = WaveAxis.Z;
-        [Range(0f, 0.1f)][SerializeField] private float waveStrength = 0.02f;
-        [SerializeField] private float waveSpeed = 1f;
-        [SerializeField] private float waveFrequency = 8f;
-
         [Header("Shader Property Names")]
         [SerializeField] private string waterLevelProperty = "_WaterLevel";
         [SerializeField] private string fillMinProperty = "_FillMin";
@@ -64,10 +55,6 @@ namespace IndustrialReactorSimulator
         [SerializeField] private string fillAxisProperty = "_FillAxis";
         [SerializeField] private string swirlSpeedProperty = "_SwirlSpeed";
         [SerializeField] private string emissionIntensityProperty = "_EmissionIntensity";
-        [SerializeField] private string waveAxisProperty = "_WaveAxis";
-        [SerializeField] private string waveStrengthProperty = "_WaveStrength";
-        [SerializeField] private string waveSpeedProperty = "_WaveSpeed";
-        [SerializeField] private string waveFrequencyProperty = "_WaveFrequency";
 
         [Header("Runtime State (Read Only)")]
         [SerializeField][Range(0f, 1f)] private float currentWaterLevel = 0f;
@@ -214,17 +201,6 @@ namespace IndustrialReactorSimulator
             UpdateVisuals();
         }
 
-        /// <summary>
-        /// Set the surface wave axis at runtime. Enables script override so the
-        /// chosen axis is applied to the material.
-        /// </summary>
-        public void SetWaveAxis(WaveAxis axis)
-        {
-            waveAxis = axis;
-            overrideWaveSettings = true;
-            ApplyShaderProperties();
-        }
-
         /// <summary>Reset to empty.</summary>
         public void ResetWater()
         {
@@ -296,19 +272,9 @@ namespace IndustrialReactorSimulator
             propertyBlock.SetFloat(waterLevelProperty, currentWaterLevel);
             propertyBlock.SetFloat(fillMinProperty, fillMin);
             propertyBlock.SetFloat(fillMaxProperty, fillMax);
-            propertyBlock.SetFloat(fillAxisProperty, fillAxis == WaterFillAxis.Y ? 0f : 1f);
+            // Fill axis convention for the shader: 0 = X, 1 = Y, 2 = Z
+            propertyBlock.SetFloat(fillAxisProperty, fillAxis == WaterFillAxis.Y ? 1f : 2f);
             propertyBlock.SetFloat(swirlSpeedProperty, currentSwirlSpeed);
-
-            // Optionally drive wave settings from the script (otherwise the
-            // material's own values are used).
-            if (overrideWaveSettings)
-            {
-                propertyBlock.SetFloat(waveAxisProperty, (float)waveAxis);
-                propertyBlock.SetFloat(waveStrengthProperty, waveStrength);
-                propertyBlock.SetFloat(waveSpeedProperty, waveSpeed);
-                propertyBlock.SetFloat(waveFrequencyProperty, waveFrequency);
-            }
-
             waterRenderer.SetPropertyBlock(propertyBlock);
         }
 
@@ -344,13 +310,5 @@ namespace IndustrialReactorSimulator
     {
         Y,  // Vertical fill (default)
         Z   // Horizontal fill (for horizontal tanks)
-    }
-
-    /// <summary>Axis the surface ripples travel along (matches shader _WaveAxis).</summary>
-    public enum WaveAxis
-    {
-        X = 0,
-        Z = 1,
-        Both = 2
     }
 }

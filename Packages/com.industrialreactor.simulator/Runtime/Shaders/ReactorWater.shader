@@ -1,41 +1,69 @@
 // ============================================================================
-// Industrial Reactor Simulator - Water Shader (URP)
+// Industrial Reactor Simulator - Tank Water Shader (URP)
 //
-// Fills BOTTOM -> TOP using the mesh's real OBJECT-SPACE height bounds.
-// The script (WaterSimulator) passes:
+// Realistic flowing water (flow/foam/caustics/fresnel/surface band) shared with
+// the pipe shader via WaterFlowCore.hlsl.
+//
+// Fill is driven BOTTOM -> TOP by the mesh's real OBJECT-SPACE bounds, so it
+// never fills from the middle. The WaterSimulator passes:
 //     _WaterLevel : 0..1 fill amount
 //     _FillMin    : object-space minimum along the fill axis
 //     _FillMax    : object-space maximum along the fill axis
-//     _FillAxis   : 0 = fill along Y, 1 = fill along Z
-//
-// Because clipping is based on real geometry bounds (NOT UVs and NOT the
-// pivot), the water can never "fill from the middle".
+//     _FillAxis   : 0 = X, 1 = Y (default), 2 = Z
+//     _SwirlSpeed / _EmissionIntensity : agitator + glow
 // ============================================================================
 
 Shader "Industrial Reactor/Water"
 {
     Properties
     {
-        _Color        ("Water Color", Color) = (0.2, 0.5, 0.8, 0.7)
-        _DeepColor    ("Deep Color", Color)  = (0.1, 0.3, 0.5, 0.9)
+        [Header(Water Colors)]
+        _ShallowColor     ("Shallow Color", Color) = (0.15, 0.55, 0.75, 0.8)
+        _DeepColor        ("Deep Color",    Color) = (0.02, 0.18, 0.45, 1.0)
+        _FoamColor        ("Foam Color",    Color) = (0.88, 0.94, 0.97, 1.0)
 
-        _WaterLevel   ("Water Level (0-1)", Range(0,1)) = 0.0
-        _FillMin      ("Fill Min (object space)", Float) = -0.5
-        _FillMax      ("Fill Max (object space)", Float) =  0.5
-        _FillAxis     ("Fill Axis (0=Y, 1=Z)", Float)    =  0
+        [Header(Flow)]
+        _FlowSpeed        ("Flow Speed",        Range(0,5))   = 1.8
+        _FlowTiling       ("Flow Tiling",       Range(0.1,8)) = 2.5
+        _Turbulence       ("Turbulence",        Range(0,1))   = 0.35
+        _WaveHeight       ("Ripple Strength",   Range(0,1))   = 0.4
 
-        _Smoothness   ("Smoothness", Range(0,1)) = 0.9
-        _FresnelPower ("Fresnel Power", Range(1,5)) = 2.0
-        _EmissionIntensity ("Emission Intensity", Range(0,5)) = 0.0
+        [Header(Lighting)]
+        _SpecularPower    ("Specular Power",    Range(1,256)) = 80.0
+        _SpecularStrength ("Specular Strength", Range(0,1))   = 0.4
+        _FresnelPower     ("Fresnel Power",     Range(0.5,8)) = 2.5
 
-        [Header(Surface Waves)]
-        _WaveSpeed    ("Wave Speed", Float) = 1.0
-        _WaveStrength ("Wave Strength", Range(0,0.1)) = 0.02
-        _WaveFrequency("Wave Frequency", Float) = 8.0
-        [Enum(X,0,Z,1,Both,2)] _WaveAxis ("Wave Axis", Float) = 1
+        [Header(Foam)]
+        _FoamAmount       ("Foam Amount",       Range(0,1))   = 0.35
+        _FoamSpeed        ("Foam Speed",        Range(0,3))   = 0.6
+        _FoamTiling       ("Foam Tiling",       Range(0.1,8)) = 4.0
 
-        [Header(Swirl)]
-        _SwirlSpeed   ("Swirl Speed", Range(0,200)) = 0
+        [Header(Caustics)]
+        _CausticsScale    ("Caustics Scale",    Range(0.1,8)) = 3.0
+        _CausticsSpeed    ("Caustics Speed",    Range(0,2))   = 0.5
+        _CausticsStrength ("Caustics Strength", Range(0,1))   = 0.2
+
+        [Header(Blending)]
+        _DepthStrength    ("Depth Blend",       Range(0,1))    = 0.6
+        _EdgeFoam         ("Edge Foam",         Range(0,0.3))  = 0.08
+        _CapFade          ("Cap Fade",          Range(0,0.2))  = 0.06
+
+        [Header(Surface Line)]
+        _SurfaceFoamWidth ("Surface Foam Width",     Range(0,0.15)) = 0.04
+        _SurfaceWaveAmp   ("Surface Wave Amplitude", Range(0,0.05)) = 0.015
+        _SurfaceWaveFreq  ("Surface Wave Frequency", Range(1,30))   = 12.0
+
+        [Header(Fill (driven by WaterSimulator))]
+        _WaterLevel       ("Water Level (0-1)",         Range(0,1)) = 0.0
+        _FillMin          ("Fill Min (object space)",   Float)      = -0.5
+        _FillMax          ("Fill Max (object space)",   Float)      =  0.5
+        _FillAxis         ("Fill Axis (0=X,1=Y,2=Z)",   Float)      =  1
+        [Toggle] _InvertFill ("Invert Fill", Float) = 0
+
+        [Header(Extras)]
+        _SwirlSpeed        ("Swirl Speed",        Range(0,200)) = 0
+        _EmissionIntensity ("Emission Intensity", Range(0,5))   = 0.0
+        [HideInInspector] _TimeOffset ("Time Offset", Float)    = 0
     }
 
     SubShader
@@ -54,132 +82,70 @@ Shader "Industrial Reactor/Water"
 
             Blend SrcAlpha OneMinusSrcAlpha
             ZWrite Off
-            Cull Off          // show inner surface of the water volume too
+            Cull Off
 
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
             struct Attributes
             {
                 float4 positionOS : POSITION;
                 float3 normalOS   : NORMAL;
-                float2 uv         : TEXCOORD0;
             };
 
             struct Varyings
             {
-                float4 positionCS  : SV_POSITION;
-                float3 positionOS  : TEXCOORD0;  // object space (for fill clip)
-                float3 positionWS  : TEXCOORD1;
-                float3 normalWS    : TEXCOORD2;
-                float2 uv          : TEXCOORD3;
-                float  fillCoord   : TEXCOORD4;  // 0 at bottom, 1 at top
+                float4 positionCS : SV_POSITION;
+                float3 positionOS : TEXCOORD0;
+                float3 positionWS : TEXCOORD1;
+                float3 normalWS   : TEXCOORD2;
             };
 
             CBUFFER_START(UnityPerMaterial)
-                half4 _Color;
+                half4 _ShallowColor;
                 half4 _DeepColor;
-                half  _WaterLevel;
-                half  _FillMin;
-                half  _FillMax;
-                half  _FillAxis;
-                half  _Smoothness;
-                half  _FresnelPower;
-                half  _EmissionIntensity;
-                half  _WaveSpeed;
-                half  _WaveStrength;
-                half  _WaveFrequency;
-                half  _WaveAxis;
-                half  _SwirlSpeed;
+                half4 _FoamColor;
+                half  _FlowSpeed, _FlowTiling, _Turbulence, _WaveHeight;
+                half  _SpecularPower, _SpecularStrength, _FresnelPower;
+                half  _FoamAmount, _FoamSpeed, _FoamTiling;
+                half  _CausticsScale, _CausticsSpeed, _CausticsStrength;
+                half  _DepthStrength, _EdgeFoam, _CapFade;
+                half  _SurfaceFoamWidth, _SurfaceWaveAmp, _SurfaceWaveFreq;
+                half  _WaterLevel, _FillMin, _FillMax, _FillAxis, _InvertFill;
+                half  _SwirlSpeed, _EmissionIntensity, _TimeOffset;
             CBUFFER_END
 
-            // Normalized 0..1 height of a vertex/fragment along the fill axis.
-            float GetFillCoord(float3 posOS)
-            {
-                float v = (_FillAxis > 0.5) ? posOS.z : posOS.y;
-                float range = max(_FillMax - _FillMin, 1e-4);
-                return saturate((v - _FillMin) / range);
-            }
+            #include "WaterFlowCore.hlsl"
 
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
-
-                float3 posOS = IN.positionOS.xyz;
-                float fillCoord = GetFillCoord(posOS);
-
-                // Gentle surface waves near the water top only.
-                // _WaveAxis selects which axis the ripples travel along:
-                //   0 = X only, 1 = Z only (default), 2 = both (radial-ish)
-                float t = _Time.y * _WaveSpeed;
-                float freq = _WaveFrequency;
-                float wave;
-                if (_WaveAxis < 0.5)        // X only
-                    wave = sin(posOS.x * freq + t);
-                else if (_WaveAxis < 1.5)   // Z only
-                    wave = sin(posOS.z * freq + t);
-                else                        // Both
-                    wave = sin(posOS.x * freq + t) * cos(posOS.z * (freq * 0.8) + t * 0.7);
-
-                float topMask = smoothstep(_WaterLevel - 0.08, _WaterLevel, fillCoord);
-                posOS.y += wave * _WaveStrength * topMask;
-
-                OUT.positionOS = IN.positionOS.xyz; // unmodified for stable clip
-                OUT.positionCS = TransformObjectToHClip(posOS);
-                OUT.positionWS = TransformObjectToWorld(posOS);
+                OUT.positionOS = IN.positionOS.xyz;
+                OUT.positionCS = TransformObjectToHClip(IN.positionOS.xyz);
+                OUT.positionWS = TransformObjectToWorld(IN.positionOS.xyz);
                 OUT.normalWS   = TransformObjectToWorldNormal(IN.normalOS);
-                OUT.uv         = IN.uv;
-                OUT.fillCoord  = fillCoord;
                 return OUT;
             }
 
             half4 frag(Varyings IN) : SV_Target
             {
-                // Recompute precise fill coordinate per-fragment for a crisp line
-                float fillCoord = GetFillCoord(IN.positionOS);
+                float fillCoord = IR_GetFillCoord(IN.positionOS, _FillAxis, _FillMin, _FillMax, _InvertFill);
+                float2 cylUV    = IR_CylUV(IN.positionOS, fillCoord);
+                float3 viewWS   = GetWorldSpaceViewDir(IN.positionWS);
 
-                // BOTTOM -> TOP: keep fragments below the water line, clip above
-                clip(_WaterLevel - fillCoord + 1e-4);
+                half4 col = IR_ComputeWaterFlow(cylUV, fillCoord, _WaterLevel, IN.normalWS, viewWS, 1.0);
 
-                // Depth-based tint (deeper = darker)
-                float depth = saturate(1.0 - (fillCoord / max(_WaterLevel, 0.01)));
-                half4 col = lerp(_Color, _DeepColor, depth * 0.6);
+                // Swirl tint (driven by agitator) + emission glow
+                float ang   = _SwirlSpeed * _Time.y * 0.01;
+                float swirl = sin(length(cylUV - 0.5) * 20.0 - ang) * 0.5 + 0.5;
+                col.rgb += swirl * 0.04 * _ShallowColor.rgb;
+                col.rgb += _ShallowColor.rgb * _EmissionIntensity;
+                col.rgb = saturate(col.rgb);
 
-                float3 N = normalize(IN.normalWS);
-                float3 V = normalize(GetWorldSpaceViewDir(IN.positionWS));
-
-                // Fresnel rim
-                float fres = pow(1.0 - saturate(dot(N, V)), _FresnelPower);
-                col.rgb += fres * 0.15;
-
-                // Main light
-                Light mainLight = GetMainLight();
-                float NdotL = saturate(dot(N, mainLight.direction));
-                col.rgb *= mainLight.color * (NdotL * 0.5 + 0.5);
-
-                // Specular highlight
-                float3 H = normalize(mainLight.direction + V);
-                float spec = pow(saturate(dot(N, H)), _Smoothness * 100.0 + 1.0);
-                col.rgb += spec * mainLight.color * 0.3;
-
-                // Swirl pattern (driven by agitator)
-                float2 c = IN.uv - 0.5;
-                float ang = _SwirlSpeed * _Time.y * 0.01;
-                float dist = length(c);
-                float swirl = sin(dist * 20.0 - ang) * 0.5 + 0.5;
-                col.rgb += swirl * 0.05 * _Color.rgb;
-
-                // Emission glow
-                col.rgb += _Color.rgb * _EmissionIntensity;
-
-                // Brighten the very top surface line slightly
-                float surface = smoothstep(_WaterLevel - 0.02, _WaterLevel, fillCoord);
-                col.rgb += surface * 0.2;
-
+                clip(col.a - 0.001);
                 return col;
             }
             ENDHLSL
