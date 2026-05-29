@@ -1,19 +1,16 @@
 // Industrial Reactor Simulator - Tank Cutaway Shader (URP)
-// Copyright (c) 2024 Industrial Reactor Simulator. MIT License.
-// Single shader that handles both exterior (metal look) and cutaway clipping
+// Metal tank with clipping plane support
 
 Shader "Industrial Reactor/Tank Cutaway"
 {
     Properties
     {
-        [Header(Metal Appearance)]
-        _BaseColor ("Color", Color) = (0.8, 0.8, 0.85, 1)
-        _BaseMap ("Albedo", 2D) = "white" {}
-        _Metallic ("Metallic", Range(0, 1)) = 0.7
-        _Smoothness ("Smoothness", Range(0, 1)) = 0.8
+        _BaseColor ("Color", Color) = (0.7, 0.7, 0.75, 1)
+        _Metallic ("Metallic", Range(0, 1)) = 0.8
+        _Smoothness ("Smoothness", Range(0, 1)) = 0.7
         
-        [Header(Cutaway Settings)]
-        _ClipPlane ("Clip Plane (xyz=normal, w=distance)", Vector) = (1, 0, 0, 0)
+        [Header(Cutaway)]
+        _ClipPlane ("Clip Plane", Vector) = (1, 0, 0, 0)
         _ClipDir ("Clip Direction", Vector) = (1, 0, 0, 0)
         [Toggle] _EnableClip ("Enable Clipping", Float) = 0
         
@@ -23,20 +20,22 @@ Shader "Industrial Reactor/Tank Cutaway"
 
     SubShader
     {
-        Tags { "RenderType" = "Opaque" "RenderPipeline" = "UniversalPipeline" "Queue" = "Geometry" }
-        LOD 200
+        Tags 
+        { 
+            "RenderType" = "Opaque" 
+            "RenderPipeline" = "UniversalPipeline" 
+        }
 
-        // Main pass - exterior surface with clipping
+        // Front faces
         Pass
         {
-            Name "ForwardLit"
+            Name "Exterior"
             Tags { "LightMode" = "UniversalForward" }
             Cull Back
 
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
-            #pragma multi_compile_fog
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -45,78 +44,66 @@ Shader "Industrial Reactor/Tank Cutaway"
             {
                 float4 positionOS : POSITION;
                 float3 normalOS : NORMAL;
-                float2 uv : TEXCOORD0;
             };
 
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
-                float2 uv : TEXCOORD0;
-                float3 positionWS : TEXCOORD1;
-                float3 normalWS : TEXCOORD2;
-                float fogFactor : TEXCOORD3;
+                float3 positionWS : TEXCOORD0;
+                float3 normalWS : TEXCOORD1;
             };
 
-            TEXTURE2D(_BaseMap);
-            SAMPLER(sampler_BaseMap);
-
             CBUFFER_START(UnityPerMaterial)
-                float4 _BaseMap_ST;
-                float4 _BaseColor;
-                float _Metallic;
-                float _Smoothness;
+                half4 _BaseColor;
+                half _Metallic;
+                half _Smoothness;
                 float4 _ClipPlane;
                 float4 _ClipDir;
-                float _EnableClip;
-                float4 _InteriorColor;
+                half _EnableClip;
+                half4 _InteriorColor;
             CBUFFER_END
 
-            Varyings vert(Attributes input)
+            Varyings vert(Attributes IN)
             {
-                Varyings output;
-                VertexPositionInputs posInputs = GetVertexPositionInputs(input.positionOS.xyz);
-                output.positionCS = posInputs.positionCS;
-                output.positionWS = posInputs.positionWS;
-                output.normalWS = TransformObjectToWorldNormal(input.normalOS);
-                output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
-                output.fogFactor = ComputeFogFactor(posInputs.positionCS.z);
-                return output;
+                Varyings OUT;
+                OUT.positionCS = TransformObjectToHClip(IN.positionOS.xyz);
+                OUT.positionWS = TransformObjectToWorld(IN.positionOS.xyz);
+                OUT.normalWS = TransformObjectToWorldNormal(IN.normalOS);
+                return OUT;
             }
 
-            half4 frag(Varyings input) : SV_Target
+            half4 frag(Varyings IN) : SV_Target
             {
-                // Clip if enabled
+                // Clipping
                 if (_EnableClip > 0.5)
                 {
-                    float clipDist = dot(input.positionWS, _ClipPlane.xyz) + _ClipPlane.w;
-                    clip(clipDist);
+                    float dist = dot(IN.positionWS, _ClipPlane.xyz) + _ClipPlane.w;
+                    clip(dist);
                 }
-
-                // Metal appearance
-                half4 baseColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv) * _BaseColor;
-                float3 normalWS = normalize(input.normalWS);
-                float3 viewDir = normalize(GetWorldSpaceViewDir(input.positionWS));
+                
+                float3 normalWS = normalize(IN.normalWS);
+                float3 viewDir = normalize(GetWorldSpaceViewDir(IN.positionWS));
                 
                 // Lighting
                 Light mainLight = GetMainLight();
                 float NdotL = saturate(dot(normalWS, mainLight.direction));
-                float3 diffuse = baseColor.rgb * mainLight.color * (NdotL * 0.5 + 0.5);
+                half3 diffuse = _BaseColor.rgb * mainLight.color * (NdotL * 0.5 + 0.5);
                 
-                // Specular for metallic look
-                float3 halfDir = normalize(mainLight.direction + viewDir);
-                float NdotH = saturate(dot(normalWS, halfDir));
-                float spec = pow(NdotH, _Smoothness * 128.0) * _Metallic;
+                // Specular
+                float3 halfVec = normalize(mainLight.direction + viewDir);
+                float spec = pow(saturate(dot(normalWS, halfVec)), _Smoothness * 100.0);
+                diffuse += spec * mainLight.color * _Metallic * 0.5;
                 
                 // Fresnel rim
                 float fresnel = pow(1.0 - saturate(dot(normalWS, viewDir)), 4.0);
+                diffuse += fresnel * 0.08;
                 
-                float3 finalColor = diffuse + spec * mainLight.color + fresnel * 0.1;
-                return half4(MixFog(finalColor, input.fogFactor), 1.0);
+                return half4(diffuse, 1.0);
             }
             ENDHLSL
         }
 
-        // Interior pass - back faces visible when cut
+        // Back faces (interior)
         Pass
         {
             Name "Interior"
@@ -144,46 +131,44 @@ Shader "Industrial Reactor/Tank Cutaway"
             };
 
             CBUFFER_START(UnityPerMaterial)
-                float4 _BaseMap_ST;
-                float4 _BaseColor;
-                float _Metallic;
-                float _Smoothness;
+                half4 _BaseColor;
+                half _Metallic;
+                half _Smoothness;
                 float4 _ClipPlane;
                 float4 _ClipDir;
-                float _EnableClip;
-                float4 _InteriorColor;
+                half _EnableClip;
+                half4 _InteriorColor;
             CBUFFER_END
 
-            Varyings vert(Attributes input)
+            Varyings vert(Attributes IN)
             {
-                Varyings output;
-                VertexPositionInputs posInputs = GetVertexPositionInputs(input.positionOS.xyz);
-                output.positionCS = posInputs.positionCS;
-                output.positionWS = posInputs.positionWS;
-                output.normalWS = -TransformObjectToWorldNormal(input.normalOS); // Flip for interior
-                return output;
+                Varyings OUT;
+                OUT.positionCS = TransformObjectToHClip(IN.positionOS.xyz);
+                OUT.positionWS = TransformObjectToWorld(IN.positionOS.xyz);
+                OUT.normalWS = -TransformObjectToWorldNormal(IN.normalOS);
+                return OUT;
             }
 
-            half4 frag(Varyings input) : SV_Target
+            half4 frag(Varyings IN) : SV_Target
             {
-                // Clip if enabled
+                // Clipping
                 if (_EnableClip > 0.5)
                 {
-                    float clipDist = dot(input.positionWS, _ClipPlane.xyz) + _ClipPlane.w;
-                    clip(clipDist);
+                    float dist = dot(IN.positionWS, _ClipPlane.xyz) + _ClipPlane.w;
+                    clip(dist);
                 }
-
-                float3 normalWS = normalize(input.normalWS);
                 
-                // Simple interior lighting
+                float3 normalWS = normalize(IN.normalWS);
+                
                 Light mainLight = GetMainLight();
                 float NdotL = saturate(dot(normalWS, mainLight.direction));
-                float3 diffuse = _InteriorColor.rgb * mainLight.color * (NdotL * 0.3 + 0.7);
+                half3 color = _InteriorColor.rgb * mainLight.color * (NdotL * 0.3 + 0.7);
                 
-                return half4(diffuse, 1.0);
+                return half4(color, 1.0);
             }
             ENDHLSL
         }
     }
-    FallBack "Universal Render Pipeline/Lit"
+    
+    FallBack "Universal Render Pipeline/Unlit"
 }

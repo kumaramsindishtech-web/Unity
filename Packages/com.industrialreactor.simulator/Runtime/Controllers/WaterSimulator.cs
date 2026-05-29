@@ -34,10 +34,7 @@ namespace IndustrialReactorSimulator
 
         [Header("Shader Properties")]
         [SerializeField] private string waterLevelProperty = "_WaterLevel";
-        [SerializeField] private string fillAxisProperty = "_FillAxis";
         [SerializeField] private string swirlSpeedProperty = "_SwirlSpeed";
-        [SerializeField] private string emissionIntensityProperty = "_EmissionIntensity";
-        [SerializeField] private string turbulenceProperty = "_Turbulence";
 
         [Header("Runtime State")]
         [SerializeField][Range(0f, 1f)] private float currentWaterLevel = 0f;
@@ -262,25 +259,18 @@ namespace IndustrialReactorSimulator
         {
             if (waterRenderer == null) return;
 
-            // Fill axis value for shader: 0 = Y axis, 1 = Z axis
-            float fillAxisValue = fillAxis == WaterFillAxis.Z ? 1f : 0f;
-
             if (useMaterialPropertyBlock)
             {
                 waterRenderer.GetPropertyBlock(propertyBlock);
                 propertyBlock.SetFloat(waterLevelProperty, currentWaterLevel);
-                propertyBlock.SetFloat(fillAxisProperty, fillAxisValue);
                 propertyBlock.SetFloat(swirlSpeedProperty, currentSwirlSpeed);
-                propertyBlock.SetFloat(turbulenceProperty, currentSwirlSpeed * 0.1f);
                 waterRenderer.SetPropertyBlock(propertyBlock);
             }
             else
             {
                 Material mat = waterRenderer.material;
                 mat.SetFloat(waterLevelProperty, currentWaterLevel);
-                mat.SetFloat(fillAxisProperty, fillAxisValue);
                 mat.SetFloat(swirlSpeedProperty, currentSwirlSpeed);
-                mat.SetFloat(turbulenceProperty, currentSwirlSpeed * 0.1f);
             }
         }
 
