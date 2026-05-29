@@ -17,7 +17,7 @@ namespace IndustrialReactorSimulator
     public class ReactorController : MonoBehaviour
     {
         private static ReactorController _instance;
-        public static ReactorController Instance => _instance ??= FindObjectOfType<ReactorController>();
+        public static ReactorController Instance => _instance ??= FindFirstObjectByType<ReactorController>();
 
         [Header("Component References")]
         [SerializeField] private ValveController inletValve;
@@ -51,8 +51,10 @@ namespace IndustrialReactorSimulator
 
         [Header("Flow State (Read Only)")]
         [SerializeField] private bool inletPipeFilled = false;
+#pragma warning disable CS0414 // Field is assigned but its value is never used
         [SerializeField] private bool tankReceivingWater = false;
         [SerializeField] private bool outletPipeDraining = false;
+#pragma warning restore CS0414
 
         // Properties
         public ReactorState CurrentState => currentState;
