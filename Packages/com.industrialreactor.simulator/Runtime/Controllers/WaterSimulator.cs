@@ -35,6 +35,7 @@ namespace IndustrialReactorSimulator
         [Header("Shader Properties")]
         [SerializeField] private string waterLevelProperty = "_WaterLevel";
         [SerializeField] private string swirlSpeedProperty = "_SwirlSpeed";
+        [SerializeField] private string emissionIntensityProperty = "_EmissionIntensity";
 
         [Header("Runtime State")]
         [SerializeField][Range(0f, 1f)] private float currentWaterLevel = 0f;

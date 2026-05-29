@@ -72,7 +72,9 @@ namespace IndustrialReactorSimulator
         private Coroutine fillCoroutine;
         private Coroutine fadeCoroutine;
         private Material originalMaterial;
+#pragma warning disable CS0414 // Field is assigned but its value is never used
         private bool isGlassModeActive = false;
+#pragma warning restore CS0414
 
         // Events for sequential flow coordination
         public event Action OnPipeFilled;
